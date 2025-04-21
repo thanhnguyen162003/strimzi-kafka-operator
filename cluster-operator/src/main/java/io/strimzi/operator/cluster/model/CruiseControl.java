@@ -98,12 +98,6 @@ public class CruiseControl extends AbstractModel implements SupportsMetrics, Sup
     protected static final String ENV_VAR_CRUISE_CONTROL_METRICS_ENABLED = "CRUISE_CONTROL_METRICS_ENABLED";
 
     /**
-     * Annotation for rolling a cluster whenever the server configuration has changed.
-     * When the configuration hash annotation change is detected, we force a pod restart.
-     */
-    public static final String ANNO_STRIMZI_SERVER_CONFIGURATION_HASH = Annotations.STRIMZI_DOMAIN + "server-configuration-hash";
-
-    /**
      * Annotation for rolling a cluster whenever the capacity configuration has changed.
      * When the configuration hash annotation change is detected, we force a pod restart.
      */
@@ -434,8 +428,10 @@ public class CruiseControl extends AbstractModel implements SupportsMetrics, Sup
         LOGGER.debugCr(reconciliation, "Generating certificates");
         try {
             Set<NodeRef> nodes = Set.of(new NodeRef(CruiseControl.COMPONENT_TYPE, 0, null, false, false));
-            ccCerts = clusterCa.generateCcCerts(namespace, clusterName, CertUtils.extractCertsAndKeysFromSecret(existingSecret, nodes),
-                    nodes, isMaintenanceTimeWindowsSatisfied, clusterCa.hasCaCertGenerationChanged(existingSecret));
+            ccCerts = clusterCa.generateCcCerts(namespace, clusterName,
+                    // Only pass existing certificates if the CA cert generation hasn't changed since they were generated
+                    clusterCa.hasCaCertGenerationChanged(existingSecret) ? Map.of() : CertUtils.extractCertsAndKeysFromSecret(existingSecret, nodes),
+                    nodes, isMaintenanceTimeWindowsSatisfied);
         } catch (IOException e) {
             LOGGER.warnCr(reconciliation, "Error while generating certificates", e);
         }

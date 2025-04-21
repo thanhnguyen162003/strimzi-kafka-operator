@@ -93,6 +93,23 @@
         </developer>
     </developers>
 
+    <repositories>
+        <repository>
+            <!--
+            Until there is a new release of Kafka Access Operator we are using the Sonatype repository with its SNAPSHOT.
+            Tracked in https://github.com/strimzi/strimzi-kafka-operator/issues/11207.
+            -->
+            <id>oss-sonatype</id>
+            <url>https://oss.sonatype.org/content/repositories/snapshots/</url>
+            <releases>
+                <enabled>false</enabled>
+            </releases>
+            <snapshots>
+                <enabled>true</enabled>
+            </snapshots>
+        </repository>
+    </repositories>
+
     <properties>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <maven.compiler.release>17</maven.compiler.release>
@@ -126,19 +143,19 @@
         <lombok.version>1.18.32</lombok.version>
 
         <!-- Runtime dependencies -->
-        <fabric8.kubernetes-client.version>7.0.1</fabric8.kubernetes-client.version>
-        <fabric8.openshift-client.version>7.0.1</fabric8.openshift-client.version>
-        <fabric8.kubernetes-model.version>7.0.1</fabric8.kubernetes-model.version>
+        <fabric8.kubernetes-client.version>7.1.0</fabric8.kubernetes-client.version>
+        <fabric8.openshift-client.version>7.1.0</fabric8.openshift-client.version>
+        <fabric8.kubernetes-model.version>7.1.0</fabric8.kubernetes-model.version>
         <fabric8.zjsonpatch.version>0.3.0</fabric8.zjsonpatch.version>
-        <fasterxml.jackson-core.version>2.16.2</fasterxml.jackson-core.version>
-        <fasterxml.jackson-databind.version>2.16.2</fasterxml.jackson-databind.version>
-        <fasterxml.jackson-dataformat.version>2.16.2</fasterxml.jackson-dataformat.version>
-        <fasterxml.jackson-annotations.version>2.16.2</fasterxml.jackson-annotations.version>
-        <fasterxml.jackson-datatype.version>2.16.2</fasterxml.jackson-datatype.version>
-        <fasterxml.jackson-jaxrs.version>2.16.2</fasterxml.jackson-jaxrs.version>
-        <vertx.version>4.5.11</vertx.version>
-        <vertx-junit5.version>4.5.11</vertx-junit5.version>
-        <kafka.version>3.9.0</kafka.version>
+        <fasterxml.jackson-core.version>2.18.3</fasterxml.jackson-core.version>
+        <fasterxml.jackson-databind.version>2.18.3</fasterxml.jackson-databind.version>
+        <fasterxml.jackson-dataformat.version>2.18.3</fasterxml.jackson-dataformat.version>
+        <fasterxml.jackson-annotations.version>2.18.3</fasterxml.jackson-annotations.version>
+        <fasterxml.jackson-datatype.version>2.18.3</fasterxml.jackson-datatype.version>
+        <fasterxml.jackson-jaxrs.version>2.18.3</fasterxml.jackson-jaxrs.version>
+        <vertx.version>4.5.14</vertx.version>
+        <vertx-junit5.version>4.5.14</vertx-junit5.version>
+        <kafka.version>4.0.0</kafka.version>
         <yammer-metrics.version>2.2.0</yammer-metrics.version>
         <snappy.version>1.1.10.5</snappy.version>
         <slf4j.version>1.7.36</slf4j.version>
@@ -146,11 +163,17 @@
         <quartz.version>2.3.2</quartz.version>
         <opentelemetry.version>1.34.1</opentelemetry.version>
         <opentelemetry-alpha.version>${opentelemetry.version}-alpha</opentelemetry-alpha.version>
-        <jetty.version>9.4.56.v20240826</jetty.version>
+        <jetty.version>12.0.16</jetty.version>
+        <!--
+        This property is used to track the Jetty version used by Kafka. Kafka uses old Jetty version that is not
+        supported anymore. This also needs to be used by the kafka-agent module. Strimzi operators uses newer supported
+        Jetty version.
+        -->
+        <jetty-old-kafka.version>9.4.56.v20240826</jetty-old-kafka.version>
         <javax-servlet.version>3.1.0</javax-servlet.version>
-        <strimzi-oauth.version>0.15.0</strimzi-oauth.version>
-        <netty.version>4.1.115.Final</netty.version>
-        <micrometer.version>1.12.3</micrometer.version>
+        <strimzi-oauth.version>0.16.2</strimzi-oauth.version>
+        <netty.version>4.1.118.Final</netty.version>
+        <micrometer.version>1.12.13</micrometer.version>
         <jayway-jsonpath.version>2.9.0</jayway-jsonpath.version>
         <registry.version>1.3.2.Final</registry.version>
         <commons-codec.version>1.13</commons-codec.version>
@@ -159,20 +182,26 @@
         <hamcrest.version>2.2</hamcrest.version>
         <mockito.version>4.11.0</mockito.version>
         <junit.platform.version>1.8.2</junit.platform.version>
-        <junit-platform-surefire-provider.version>1.3.2</junit-platform-surefire-provider.version>
         <opentest4j.version>1.2.0</opentest4j.version>
         <jupiter.version>5.8.2</jupiter.version>
-        <strimzi-test-container.version>0.109.1</strimzi-test-container.version>
+        <strimzi-test-container.version>0.110.0</strimzi-test-container.version>
         <mockserver.version>5.13.2</mockserver.version>
         <mockwebserver.version>3.14.7</mockwebserver.version>
         <valid4j.version>1.1</valid4j.version>
         <javax.json.version>1.1.4</javax.json.version>
         <bouncycastle.version>1.78.1</bouncycastle.version>
-        <kindcontainer.version>1.4.7</kindcontainer.version>
+        <kindcontainer.version>1.4.9</kindcontainer.version>
+        <testcontainer.version>1.20.1</testcontainer.version>
+        <docker-java.version>3.4.0</docker-java.version>
         <junit4.version>4.13.2</junit4.version>
         <skodjob.test-frame.version>0.8.0</skodjob.test-frame.version>
-        <skodjob-doc.version>0.3.0</skodjob-doc.version>
-
+        <skodjob-doc.version>0.4.0</skodjob-doc.version>
+        <!--
+            Currently, there are no released versions in Maven repository of this module,
+            using SNAPSHOT for having the `api` module available and usable in the STs.
+            Tracked in https://github.com/strimzi/strimzi-kafka-operator/issues/11207.
+        -->
+        <access-operator.version>0.2.0-SNAPSHOT</access-operator.version>
         <!-- properties to skip surefire tests during failsafe execution -->
         <skipTests>false</skipTests>
         <skip.surefire.tests>${skipTests}</skip.surefire.tests>
@@ -189,6 +218,7 @@
 
     <modules>
         <module>kafka-agent</module>
+        <module>kafka-agent-3</module>
         <module>tracing-agent</module>
         <module>test</module>
         <module>crd-annotations</module>
@@ -814,6 +844,11 @@
                 <version>${jetty.version}</version>
             </dependency>
             <dependency>
+                <groupId>org.eclipse.jetty</groupId>
+                <artifactId>jetty-http</artifactId>
+                <version>${jetty.version}</version>
+            </dependency>
+            <dependency>
                 <groupId>javax.servlet</groupId>
                 <artifactId>javax.servlet-api</artifactId>
                 <version>${javax-servlet.version}</version>
@@ -834,6 +869,28 @@
                 <artifactId>test-docs-generator-maven-plugin</artifactId>
                 <version>${skodjob-doc.version}</version>
                 <scope>test</scope>
+            </dependency>
+            <!-- TestContainer dependency is needed at compile time by MockKube -->
+            <dependency>
+                <groupId>org.testcontainers</groupId>
+                <artifactId>testcontainers</artifactId>
+                <version>${testcontainer.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.testcontainers</groupId>
+                <artifactId>toxiproxy</artifactId>
+                <version>${testcontainer.version}</version>
+            </dependency>
+            <!-- Needed to align Java Docker API version between different TestContainer implementations -->
+            <dependency>
+                <groupId> com.github.docker-java</groupId>
+                <artifactId>docker-java-api</artifactId>
+                <version>${docker-java.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.strimzi.access-operator</groupId>
+                <artifactId>api</artifactId>
+                <version>${access-operator.version}</version>
             </dependency>
         </dependencies>
     </dependencyManagement>

@@ -9,6 +9,7 @@ import io.fabric8.kubernetes.api.model.LocalObjectReference;
 import io.fabric8.kubernetes.api.model.Node;
 import io.fabric8.kubernetes.api.model.PersistentVolumeClaim;
 import io.fabric8.kubernetes.api.model.Pod;
+import io.fabric8.kubernetes.api.model.Secret;
 import io.fabric8.kubernetes.api.model.rbac.ClusterRoleBinding;
 import io.fabric8.kubernetes.client.KubernetesClient;
 import io.strimzi.api.kafka.model.common.Condition;
@@ -94,6 +95,8 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.ExecutionException;
 import java.util.function.Function;
 import java.util.stream.Collectors;
@@ -155,12 +158,11 @@ public class KafkaReconciler {
     // marked as final, but their contents is modified during the reconciliation)
     private final Set<String> fsResizingRestartRequest = new HashSet<>();
 
-    private final boolean continueOnManualRUFailure;
-
     private String logging = "";
     private final Map<Integer, String> brokerLoggingHash = new HashMap<>();
     private final Map<Integer, String> brokerConfigurationHash = new HashMap<>();
     private final Map<Integer, String> kafkaServerCertificateHash = new HashMap<>();
+    private final List<String> secretsToDelete = new ArrayList<>();
     /* test */ TlsPemIdentity coTlsPemIdentity;
     /* test */ KafkaListenersReconciler.ReconciliationResult listenerReconciliationResults; // Result of the listener reconciliation with the listener details
 
@@ -231,7 +233,6 @@ public class KafkaReconciler {
 
         this.adminClientProvider = supplier.adminClientProvider;
         this.kafkaAgentClientProvider = supplier.kafkaAgentClientProvider;
-        this.continueOnManualRUFailure = config.featureGates().continueOnManualRUFailureEnabled();
     }
 
     /**
@@ -257,7 +258,7 @@ public class KafkaReconciler {
                 .compose(i -> scaleDown())
                 .compose(i -> updateNodePoolStatuses(kafkaStatus))
                 .compose(i -> listeners())
-                .compose(i -> certificateSecret(clock))
+                .compose(i -> certificateSecrets(clock))
                 .compose(i -> brokerConfigurationConfigMaps())
                 .compose(i -> jmxSecret())
                 .compose(i -> podDisruptionBudget())
@@ -272,6 +273,7 @@ public class KafkaReconciler {
                 .compose(i -> metadataVersion(kafkaStatus))
                 .compose(i -> deletePersistentClaims())
                 .compose(i -> sharedKafkaConfigurationCleanup())
+                .compose(i -> deleteOldCertificateSecrets())
                 // This has to run after all possible rolling updates which might move the pods to different nodes
                 .compose(i -> nodePortExternalListenerStatus())
                 .compose(i -> updateKafkaStatus(kafkaStatus));
@@ -342,7 +344,7 @@ public class KafkaReconciler {
     protected Future<Void> networkPolicy() {
         if (isNetworkPolicyGeneration) {
             return networkPolicyOperator.reconcile(reconciliation, reconciliation.namespace(), KafkaResources.kafkaNetworkPolicyName(reconciliation.name()), kafka.generateNetworkPolicy(operatorNamespace, operatorNamespaceLabels))
-                    .map((Void) null);
+                    .mapEmpty();
         } else {
             return Future.succeededFuture();
         }
@@ -385,12 +387,8 @@ public class KafkaReconciler {
                                 nodes.stream().collect(Collectors.toMap(NodeRef::nodeId, node -> Map.of())),
                                 false
                         ).recover(error -> {
-                            if (continueOnManualRUFailure) {
-                                LOGGER.warnCr(reconciliation, "Manual rolling update failed (reconciliation will be continued)", error);
-                                return Future.succeededFuture();
-                            } else {
-                                return Future.failedFuture(error);
-                            }
+                            LOGGER.warnCr(reconciliation, "Manual rolling update failed (reconciliation will be continued)", error);
+                            return Future.succeededFuture();
                         });
                     } else {
                         return Future.succeededFuture();
@@ -522,7 +520,7 @@ public class KafkaReconciler {
     protected Future<Void> serviceAccount() {
         return serviceAccountOperator
                 .reconcile(reconciliation, reconciliation.namespace(), KafkaResources.kafkaComponentName(reconciliation.name()), kafka.generateServiceAccount())
-                .map((Void) null);
+                .mapEmpty();
     }
 
     /**
@@ -544,7 +542,7 @@ public class KafkaReconciler {
                                 desired
                         ),
                 desired
-        ).map((Void) null);
+        ).mapEmpty();
     }
 
     /**
@@ -588,7 +586,7 @@ public class KafkaReconciler {
                             }
                         }
 
-                        return Future.join(ops).map((Void) null);
+                        return Future.join(ops).mapEmpty();
                     }
                 });
     }
@@ -714,7 +712,7 @@ public class KafkaReconciler {
 
                     return Future
                             .join(ops)
-                            .map((Void) null);
+                            .mapEmpty();
                 });
     }
 
@@ -731,33 +729,83 @@ public class KafkaReconciler {
     }
 
     /**
-     * Manages the Secret with the node certificates used by the Kafka brokers.
+     * Manages the Secrets with the node certificates used by the Kafka nodes.
      *
      * @param clock The clock for supplying the reconciler with the time instant of each reconciliation cycle.
      *              That time is used for checking maintenance windows
      *
-     * @return      Completes when the Secret was successfully created or updated
+     * @return      Completes when the Secrets were successfully created, deleted or updated
      */
-    protected Future<Void> certificateSecret(Clock clock) {
-        return secretOperator.getAsync(reconciliation.namespace(), KafkaResources.kafkaSecretName(reconciliation.name()))
+    protected Future<Void> certificateSecrets(Clock clock) {
+        return secretOperator.listAsync(reconciliation.namespace(), kafka.getSelectorLabels().withStrimziComponentType(KafkaCluster.COMPONENT_TYPE))
+                .compose(existingSecrets -> {
+                    List<Secret> desiredCertSecrets = kafka.generateCertificatesSecrets(clusterCa, clientsCa, existingSecrets,
+                            listenerReconciliationResults.bootstrapDnsNames, listenerReconciliationResults.brokerDnsNames,
+                            Util.isMaintenanceTimeWindowsSatisfied(reconciliation, maintenanceWindows, clock.instant()));
+
+                    List<String> desiredCertSecretNames = desiredCertSecrets.stream().map(secret -> secret.getMetadata().getName()).toList();
+                    existingSecrets.forEach(secret -> {
+                        String secretName = secret.getMetadata().getName();
+                        // Don't delete desired secrets or jmx secrets
+                        if (!desiredCertSecretNames.contains(secretName) && !KafkaResources.kafkaJmxSecretName(reconciliation.name()).equals(secretName)) {
+                            secretsToDelete.add(secretName);
+                        }
+                    });
+                    return updateCertificateSecrets(desiredCertSecrets);
+                }).mapEmpty();
+    }
+
+    /**
+     * Delete old certificate Secrets that are no longer needed.
+     *
+     * @return Future that completes when the Secrets have been deleted.
+     */
+    protected Future<Void> deleteOldCertificateSecrets() {
+        List<Future<Void>> deleteFutures = secretsToDelete.stream()
+                .map(secretName -> {
+                    LOGGER.debugCr(reconciliation, "Deleting old Secret {}/{} that is no longer used.", reconciliation.namespace(), secretName);
+                    return secretOperator.deleteAsync(reconciliation, reconciliation.namespace(), secretName, false);
+                }).collect(Collectors.toCollection(ArrayList::new)); // We need to collect to mutable list because we might need to add to the list more items later
+
+        // Remove old Secret containing all certs if it exists
+        @SuppressWarnings("deprecation")
+        String oldSecretName = KafkaResources.kafkaSecretName(reconciliation.name());
+        return secretOperator.getAsync(reconciliation.namespace(), oldSecretName)
                 .compose(oldSecret -> {
-                    return secretOperator
-                            .reconcile(reconciliation, reconciliation.namespace(), KafkaResources.kafkaSecretName(reconciliation.name()),
-                                    kafka.generateCertificatesSecret(clusterCa, clientsCa, oldSecret, listenerReconciliationResults.bootstrapDnsNames, listenerReconciliationResults.brokerDnsNames, Util.isMaintenanceTimeWindowsSatisfied(reconciliation, maintenanceWindows, clock.instant())))
+                    if (oldSecret != null) {
+                        LOGGER.debugCr(reconciliation, "Deleting legacy Secret {}/{} that is replaced by pod specific Secret.", reconciliation.namespace(), oldSecretName);
+                        deleteFutures.add(secretOperator.deleteAsync(reconciliation, reconciliation.namespace(), oldSecretName, false));
+                    }
+
+                    return Future.join(deleteFutures).mapEmpty();
+                });
+    }
+
+    /**
+     * Updates the Secrets with the node certificates used by the Kafka nodes.
+     *
+     * @param secrets Secrets to update
+     *
+     * @return Future that completes when the Secrets were successfully created or updated
+     */
+    protected Future<Void> updateCertificateSecrets(List<Secret> secrets) {
+        List<Future<Object>> reconcileFutures = secrets
+                .stream()
+                .map(secret -> {
+                    String secretName = secret.getMetadata().getName();
+                    return secretOperator.reconcile(reconciliation, reconciliation.namespace(), secretName, secret)
                             .compose(patchResult -> {
                                 if (patchResult != null) {
-                                    for (NodeRef node : kafka.nodes()) {
-                                        kafkaServerCertificateHash.put(
-                                                node.nodeId(),
-                                                CertUtils.getCertificateThumbprint(patchResult.resource(),
-                                                        Ca.SecretEntry.CRT.asKey(node.podName())
-                                                ));
-                                    }
+                                    kafkaServerCertificateHash.put(
+                                            ReconcilerUtils.getPodIndexFromPodName(secretName),
+                                            CertUtils.getCertificateThumbprint(patchResult.resource(),
+                                                    Ca.SecretEntry.CRT.asKey(secretName)
+                                            ));
                                 }
-
                                 return Future.succeededFuture();
                             });
-                });
+                }).toList();
+        return Future.join(reconcileFutures).mapEmpty();
     }
 
     /**
@@ -797,18 +845,12 @@ public class KafkaReconciler {
         podAnnotations.put(Ca.ANNO_STRIMZI_IO_CLUSTER_CA_CERT_GENERATION, String.valueOf(this.clusterCa.caCertGeneration()));
         podAnnotations.put(Ca.ANNO_STRIMZI_IO_CLUSTER_CA_KEY_GENERATION, String.valueOf(this.clusterCa.caKeyGeneration()));
         podAnnotations.put(Ca.ANNO_STRIMZI_IO_CLIENTS_CA_CERT_GENERATION, String.valueOf(this.clientsCa.caCertGeneration()));
-        podAnnotations.put(Annotations.ANNO_STRIMZI_LOGGING_HASH, brokerLoggingHash.get(node.nodeId()));
-        podAnnotations.put(KafkaCluster.ANNO_STRIMZI_BROKER_CONFIGURATION_HASH, brokerConfigurationHash.get(node.nodeId()));
+        podAnnotations.put(Annotations.ANNO_STRIMZI_IO_CONFIGURATION_HASH, brokerConfigurationHash.get(node.nodeId()));
         podAnnotations.put(ANNO_STRIMZI_IO_KAFKA_VERSION, kafka.getKafkaVersion().version());
 
-        String logMessageFormatVersion = kafka.getLogMessageFormatVersion();
-        if (logMessageFormatVersion != null && !logMessageFormatVersion.isBlank()) {
-            podAnnotations.put(KafkaCluster.ANNO_STRIMZI_IO_LOG_MESSAGE_FORMAT_VERSION, logMessageFormatVersion);
-        }
-
-        String interBrokerProtocolVersion = kafka.getInterBrokerProtocolVersion();
-        if (interBrokerProtocolVersion != null && !interBrokerProtocolVersion.isBlank()) {
-            podAnnotations.put(KafkaCluster.ANNO_STRIMZI_IO_INTER_BROKER_PROTOCOL_VERSION, interBrokerProtocolVersion);
+        if (!kafka.logging().isLog4j2()) {
+            // The logging hash annotation is set only when Log4j1 is used. For Log4j2, we use the Log4j2 reloading feature
+            podAnnotations.put(Annotations.ANNO_STRIMZI_LOGGING_HASH, brokerLoggingHash.get(node.nodeId()));
         }
 
         podAnnotations.put(ANNO_STRIMZI_SERVER_CERT_HASH, kafkaServerCertificateHash.get(node.nodeId())); // Annotation of broker certificate hash
@@ -1046,7 +1088,7 @@ public class KafkaReconciler {
         // Deleting resource which likely does not exist would cause more load on the Kubernetes API then trying to get
         // it first because of the watch if it was deleted etc.
         return configMapOperator.reconcile(reconciliation, reconciliation.namespace(), KafkaResources.kafkaMetricsAndLogConfigMapName(reconciliation.name()), null)
-                .map((Void) null);
+                .mapEmpty();
     }
 
     /**
@@ -1054,46 +1096,59 @@ public class KafkaReconciler {
      * types are done because it requires the Kafka brokers to be scheduled and running to collect their node addresses.
      * Without that, we do not know on which node would they be running.
      *
+     * Note: To avoid issues with big clusters with many nodes, we first get the used nodes from the Pods and then get
+     * the node information individually for each node instead of listing all nodes and then picking up the information
+     * we need. This means more Kubernetes API calls, but helps us to avoid running out of memory.
+     *
      * @return  Future which completes when the Listener status is created for all node port listeners
      */
     protected Future<Void> nodePortExternalListenerStatus() {
-        List<Node> allNodes = new ArrayList<>();
-
         if (!ListenersUtils.nodePortListeners(kafka.getListeners()).isEmpty())   {
-            return nodeOperator.listAsync(Labels.EMPTY)
-                    .compose(result -> {
-                        allNodes.addAll(result);
-                        return podOperator.listAsync(reconciliation.namespace(), kafka.getSelectorLabels());
-                    })
-                    .map(pods -> {
-                        Map<Integer, Node> brokerNodes = new HashMap<>();
+            Map<Integer, String> brokerNodes = new HashMap<>();
+            ConcurrentMap<String, Node> nodes = new ConcurrentHashMap<>();
 
+            // First we collect all the broker pods we have so that we can find out on which worker nodes they run
+            return podOperator.listAsync(reconciliation.namespace(), kafka.getSelectorLabels().withStrimziBrokerRole(true))
+                    .compose(pods -> {
+                        // We collect the nodes used by the brokers upfront to avoid asking for the same node multiple times later
                         for (Pod broker : pods) {
-                            String podName = broker.getMetadata().getName();
-                            Integer podIndex = ReconcilerUtils.getPodIndexFromPodName(podName);
-
-                            if (broker.getStatus() != null && broker.getStatus().getHostIP() != null) {
-                                String hostIP = broker.getStatus().getHostIP();
-                                allNodes.stream()
-                                        .filter(node -> {
-                                            if (Labels.booleanLabel(broker, Labels.STRIMZI_BROKER_ROLE_LABEL, false)
-                                                    && node.getStatus() != null
-                                                    && node.getStatus().getAddresses() != null) {
-                                                return node.getStatus().getAddresses().stream().anyMatch(address -> hostIP.equals(address.getAddress()));
-                                            } else {
-                                                return false;
-                                            }
-                                        })
-                                        .findFirst()
-                                        .ifPresent(podNode -> brokerNodes.put(podIndex, podNode));
+                            if (broker.getSpec() != null && broker.getSpec().getNodeName() != null) {
+                                Integer podIndex = ReconcilerUtils.getPodIndexFromPodName(broker.getMetadata().getName());
+                                brokerNodes.put(podIndex, broker.getSpec().getNodeName());
+                            } else {
+                                // This should not happen, but to avoid some chain of errors downstream we check it and raise exception
+                                LOGGER.warnCr(reconciliation, "Kafka Pod {} has no node name specified", broker.getMetadata().getName());
+                                return Future.failedFuture(new RuntimeException("Kafka Pod " + broker.getMetadata().getName() + " has no node name specified"));
                             }
                         }
 
+                        List<Future<Void>> nodeFutures = new ArrayList<>();
+
+                        // We get the full node resource for each node with a broker
+                        for (String nodeName : brokerNodes.values().stream().distinct().toList()) {
+                            LOGGER.debugCr(reconciliation, "Getting information on worker node {} used by one or more brokers", nodeName);
+                            Future<Void> nodeFuture = nodeOperator.getAsync(nodeName).compose(node -> {
+                                if (node != null) {
+                                    nodes.put(nodeName, node);
+                                } else {
+                                    // Node was not found, but we do not want to fail because of this as it might be just some race condition
+                                    LOGGER.warnCr(reconciliation, "Worker node {} does not seem to exist", nodeName);
+                                }
+
+                                return Future.succeededFuture();
+                            });
+                            nodeFutures.add(nodeFuture);
+                        }
+
+                        return Future.join(nodeFutures);
+                    })
+                    .map(i -> {
+                        // We extract the address information from the nodes
                         for (GenericKafkaListener listener : ListenersUtils.nodePortListeners(kafka.getListeners())) {
                             // Set is used to ensure each node/port is listed only once. It is later converted to List.
                             Set<ListenerAddress> statusAddresses = new HashSet<>(brokerNodes.size());
 
-                            for (Map.Entry<Integer, Node> entry : brokerNodes.entrySet())   {
+                            for (Map.Entry<Integer, String> entry : brokerNodes.entrySet())   {
                                 String advertisedHost = ListenersUtils.brokerAdvertisedHost(listener, kafka.nodePoolForNodeId(entry.getKey()).nodeRef(entry.getKey()));
                                 ListenerAddress address;
 
@@ -1102,11 +1157,15 @@ public class KafkaReconciler {
                                             .withHost(advertisedHost)
                                             .withPort(listenerReconciliationResults.bootstrapNodePorts.get(ListenersUtils.identifier(listener)))
                                             .build();
-                                } else {
+                                } else if (nodes.get(entry.getValue()) != null) {
                                     address = new ListenerAddressBuilder()
-                                            .withHost(NodeUtils.findAddress(entry.getValue().getStatus().getAddresses(), ListenersUtils.preferredNodeAddressType(listener)))
+                                            .withHost(NodeUtils.findAddress(nodes.get(entry.getValue()).getStatus().getAddresses(), ListenersUtils.preferredNodeAddressType(listener)))
                                             .withPort(listenerReconciliationResults.bootstrapNodePorts.get(ListenersUtils.identifier(listener)))
                                             .build();
+                                } else {
+                                    // Node was not found, but we do not want to fail because of this as it might be just some race condition
+                                    LOGGER.warnCr(reconciliation, "Kafka node {} is running on an unknown node and its node port address cannot be found", entry.getKey());
+                                    continue;
                                 }
 
                                 statusAddresses.add(address);
@@ -1187,7 +1246,7 @@ public class KafkaReconciler {
 
             // Return future
             return Future.join(statusUpdateFutures)
-                    .map((Void) null);
+                    .mapEmpty();
         } else {
             return Future.succeededFuture();
         }

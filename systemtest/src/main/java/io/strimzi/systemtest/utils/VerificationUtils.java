@@ -14,7 +14,6 @@ import io.strimzi.api.kafka.Crds;
 import io.strimzi.api.kafka.model.connect.KafkaConnect;
 import io.strimzi.api.kafka.model.connect.KafkaConnectResources;
 import io.strimzi.api.kafka.model.kafka.Kafka;
-import io.strimzi.api.kafka.model.kafka.KafkaResources;
 import io.strimzi.api.kafka.model.mirrormaker2.KafkaMirrorMaker2;
 import io.strimzi.operator.common.model.Labels;
 import io.strimzi.systemtest.Environment;
@@ -138,7 +137,7 @@ public class VerificationUtils {
     }
 
     /**
-     * Verifies container configuration for specific component (kafka/zookeeper/bridge/mm) by environment key.
+     * Verifies container configuration for specific component (kafka/bridge/mm) by environment key.
      * @param namespaceName Namespace name where container is located
      * @param podNamePrefix Name of pod where container is located
      * @param containerName The container where verifying is expected
@@ -351,14 +350,6 @@ public class VerificationUtils {
 
         final String kafkaVersion = Optional.ofNullable(Crds.kafkaOperation(kubeClient(kafkaNamespaceName).getClient()).inNamespace(kafkaNamespaceName).withName(clusterName).get().getSpec().getKafka().getVersion()).orElse(Environment.ST_KAFKA_VERSION);
 
-        if (!Environment.isKRaftModeEnabled()) {
-            //Verifying docker image for zookeeper pods
-            for (int i = 0; i < controllerPods; i++) {
-                String imgFromPod = PodUtils.getContainerImageNameFromPod(kafkaNamespaceName, KafkaResources.zookeeperPodName(clusterName, i), "zookeeper");
-                assertThat("ZooKeeper Pod: " + i + " uses wrong image", imgFromPod, containsString(StUtils.parseImageMap(imgFromDeplConf.get(TestConstants.KAFKA_IMAGE_MAP)).get(kafkaVersion)));
-            }
-        }
-
         //Verifying docker image for kafka pods
         brokerPods.forEach(brokerPod -> {
             String imgFromPod = PodUtils.getContainerImageNameFromPod(kafkaNamespaceName, brokerPod, "kafka");
@@ -376,11 +367,6 @@ public class VerificationUtils {
 
         String imgFromPod = PodUtils.getContainerImageNameFromPod(kafkaNamespaceName, entityOperatorPodName, "user-operator");
         assertThat(imgFromPod, containsString(imgFromDeplConf.get(TestConstants.UO_IMAGE)));
-
-        if (!Environment.isKRaftModeEnabled()) {
-            imgFromPod = PodUtils.getContainerImageNameFromPod(kafkaNamespaceName, entityOperatorPodName, "topic-operator");
-            assertThat(imgFromPod, containsString(imgFromDeplConf.get(TestConstants.TO_IMAGE)));
-        }
 
         LOGGER.info("Docker images names of Kafka verified");
     }

@@ -5,7 +5,6 @@
 package io.strimzi.systemtest.utils.kafkaUtils;
 
 import com.fasterxml.jackson.core.type.TypeReference;
-import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.fasterxml.jackson.dataformat.yaml.YAMLFactory;
@@ -26,7 +25,6 @@ import io.strimzi.kafka.config.model.ConfigModel;
 import io.strimzi.kafka.config.model.ConfigModels;
 import io.strimzi.kafka.config.model.Scope;
 import io.strimzi.operator.common.Util;
-import io.strimzi.systemtest.Environment;
 import io.strimzi.systemtest.TestConstants;
 import io.strimzi.systemtest.cli.KafkaCmdClient;
 import io.strimzi.systemtest.resources.ResourceManager;
@@ -39,7 +37,6 @@ import io.strimzi.systemtest.utils.kubeUtils.controllers.DeploymentUtils;
 import io.strimzi.systemtest.utils.kubeUtils.objects.PodUtils;
 import io.strimzi.test.TestUtils;
 import io.strimzi.test.executor.ExecResult;
-import io.strimzi.test.k8s.exceptions.KubeClusterException;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.hamcrest.CoreMatchers;
@@ -55,17 +52,12 @@ import java.util.List;
 import java.util.Map;
 import java.util.Random;
 import java.util.function.Supplier;
-import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
 import static io.strimzi.api.kafka.model.kafka.KafkaClusterSpec.FORBIDDEN_PREFIXES;
 import static io.strimzi.api.kafka.model.kafka.KafkaClusterSpec.FORBIDDEN_PREFIX_EXCEPTIONS;
-import static io.strimzi.api.kafka.model.kafka.KafkaResources.kafkaComponentName;
-import static io.strimzi.api.kafka.model.kafka.KafkaResources.zookeeperComponentName;
 import static io.strimzi.systemtest.enums.CustomResourceStatus.NotReady;
 import static io.strimzi.systemtest.enums.CustomResourceStatus.Ready;
-import static io.strimzi.systemtest.utils.StUtils.indent;
-import static io.strimzi.test.TestUtils.waitFor;
 import static io.strimzi.test.k8s.KubeClusterResource.cmdKubeClient;
 import static io.strimzi.test.k8s.KubeClusterResource.kubeClient;
 import static org.hamcrest.MatcherAssert.assertThat;
@@ -132,34 +124,6 @@ public class KafkaUtils {
         waitUntilKafkaStatusConditionContainsMessage(namespaceName, clusterName, pattern, TestConstants.GLOBAL_STATUS_TIMEOUT);
     }
 
-    public static void waitForZkMntr(String namespaceName, String clusterName, Pattern pattern, int... podIndexes) {
-        long timeoutMs = 120_000L;
-        long pollMs = 1_000L;
-
-        for (int podIndex : podIndexes) {
-            String zookeeperPod = KafkaResources.zookeeperPodName(clusterName, podIndex);
-            String zookeeperPort = String.valueOf(12181);
-            waitFor("mntr", pollMs, timeoutMs, () -> {
-                    try {
-                        String output = cmdKubeClient(namespaceName).execInPod(zookeeperPod,
-                            "/bin/bash", "-c", "echo mntr | nc localhost " + zookeeperPort).out();
-
-                        if (pattern.matcher(output).find()) {
-                            return true;
-                        }
-                    } catch (KubeClusterException e) {
-                        LOGGER.trace("Exception while waiting for ZK to become leader/follower, ignoring", e);
-                    }
-                    return false;
-                },
-                () -> LOGGER.info("ZooKeeper `mntr` output at the point of timeout does not match {}:{}{}",
-                    pattern.pattern(),
-                    System.lineSeparator(),
-                    indent(cmdKubeClient(namespaceName).execInPod(zookeeperPod, "/bin/bash", "-c", "echo mntr | nc localhost " + zookeeperPort).out()))
-            );
-        }
-    }
-
     public static String getKafkaStatusCertificates(String namespaceName, String listenerType, String clusterName) {
         String certs = "";
         List<ListenerStatus> kafkaListeners = KafkaResource.kafkaClient().inNamespace(namespaceName).withName(clusterName).get().getStatus().getListeners();
@@ -185,8 +149,8 @@ public class KafkaUtils {
 
     @SuppressWarnings("unchecked")
     public static void waitForClusterStability(String namespaceName, String clusterName) {
-        LabelSelector brokerSelector = KafkaResource.getLabelSelector(clusterName, kafkaComponentName(clusterName));
-        LabelSelector controllerSelector = KafkaResource.getLabelSelector(clusterName, zookeeperComponentName(clusterName));
+        LabelSelector brokerSelector = KafkaResource.getLabelSelector(clusterName, StrimziPodSetResource.getBrokerComponentName(clusterName));
+        LabelSelector controllerSelector = KafkaResource.getLabelSelector(clusterName, StrimziPodSetResource.getControllerComponentName(clusterName));
 
         Map<String, String>[] controllerPods = new Map[1];
         Map<String, String>[] brokerPods = new Map[1];
@@ -201,48 +165,36 @@ public class KafkaUtils {
         eoPods[0] = DeploymentUtils.depSnapshot(namespaceName, KafkaResources.entityOperatorDeploymentName(clusterName));
 
         TestUtils.waitFor("Cluster to be stable and ready", TestConstants.GLOBAL_POLL_INTERVAL, TestConstants.TIMEOUT_FOR_CLUSTER_STABLE, () -> {
-            Map<String, String> kafkaSnapshot = PodUtils.podSnapshot(namespaceName, brokerSelector);
+            Map<String, String> brokerSnapshot = PodUtils.podSnapshot(namespaceName, brokerSelector);
+            Map<String, String> controllerSnapshot = PodUtils.podSnapshot(namespaceName, controllerSelector);
             Map<String, String> eoSnapshot = DeploymentUtils.depSnapshot(namespaceName, KafkaResources.entityOperatorDeploymentName(clusterName));
-            boolean kafkaSameAsLast = kafkaSnapshot.equals(brokerPods[0]);
+
+            boolean brokersSameAsLast = brokerSnapshot.equals(brokerPods[0]);
+            boolean controllersSameAsLast = controllerSnapshot.equals(controllerPods[0]);
             boolean eoSameAsLast = eoSnapshot.equals(eoPods[0]);
 
-            if (!kafkaSameAsLast) {
-                LOGGER.warn("Kafka cluster not stable");
+            if (!brokersSameAsLast) {
+                LOGGER.warn("Broker Pods are not stable");
+            }
+            if (!controllersSameAsLast) {
+                LOGGER.warn("Controller Pods are not stable");
             }
             if (!eoSameAsLast) {
                 LOGGER.warn("EO not stable");
             }
 
-            if (!Environment.isKRaftModeEnabled()) {
-                Map<String, String> zkSnapshot = PodUtils.podSnapshot(namespaceName, controllerSelector);
-
-                boolean zkSameAsLast = zkSnapshot.equals(controllerPods[0]);
-
-                if (!zkSameAsLast) {
-                    LOGGER.warn("ZK Cluster not stable");
+            if (brokersSameAsLast && controllersSameAsLast && eoSameAsLast) {
+                int c = count[0]++;
+                LOGGER.debug("All stable after: {} polls", c);
+                if (c > 60) {
+                    LOGGER.info("Kafka cluster is stable after: {} polls", c);
+                    return true;
                 }
-                if (zkSameAsLast && eoSameAsLast && kafkaSameAsLast) {
-                    int c = count[0]++;
-                    LOGGER.debug("All stable after: {} polls", c);
-                    if (c > 60) {
-                        LOGGER.info("Kafka cluster is stable after: {} polls", c);
-                        return true;
-                    }
-                    return false;
-                }
-                controllerPods[0] = zkSnapshot;
-            } else {
-                if (kafkaSameAsLast && eoSameAsLast) {
-                    int c = count[0]++;
-                    LOGGER.debug("All stable after: {} polls", c);
-                    if (c > 60) {
-                        LOGGER.info("Kafka cluster is stable after: {} polls", c);
-                        return true;
-                    }
-                    return false;
-                }
+                return false;
             }
-            brokerPods[0] = kafkaSnapshot;
+
+            brokerPods[0] = brokerSnapshot;
+            controllerPods[0] = controllerSnapshot;
             eoPods[0] = eoSnapshot;
 
             count[0] = 0;
@@ -429,8 +381,8 @@ public class KafkaUtils {
         TestUtils.waitFor("deletion of Kafka: " + namespaceName + "/" + kafkaClusterName, TestConstants.POLL_INTERVAL_FOR_RESOURCE_READINESS, DELETION_TIMEOUT,
             () -> {
                 if (KafkaResource.kafkaClient().inNamespace(namespaceName).withName(kafkaClusterName).get() == null &&
-                    StrimziPodSetResource.strimziPodSetClient().inNamespace(namespaceName).withName(KafkaResources.kafkaComponentName(kafkaClusterName)).get() == null  &&
-                    StrimziPodSetResource.strimziPodSetClient().inNamespace(namespaceName).withName(KafkaResources.zookeeperComponentName(kafkaClusterName)).get() == null  &&
+                    StrimziPodSetResource.strimziPodSetClient().inNamespace(namespaceName).withName(StrimziPodSetResource.getControllerComponentName(kafkaClusterName)).get() == null  &&
+                    StrimziPodSetResource.strimziPodSetClient().inNamespace(namespaceName).withName(StrimziPodSetResource.getBrokerComponentName(kafkaClusterName)).get() == null  &&
                     kubeClient(namespaceName).getDeployment(namespaceName, KafkaResources.entityOperatorDeploymentName(kafkaClusterName)) == null) {
                     return true;
                 } else {
@@ -439,16 +391,6 @@ public class KafkaUtils {
                 }
             },
             () -> LOGGER.info(KafkaResource.kafkaClient().inNamespace(namespaceName).withName(kafkaClusterName).get()));
-    }
-
-    public static String getKafkaTlsListenerCaCertName(String namespaceName, String clusterName, String listenerName) {
-        List<GenericKafkaListener> listeners = KafkaResource.kafkaClient().inNamespace(namespaceName).withName(clusterName).get().getSpec().getKafka().getListeners();
-
-        GenericKafkaListener tlsListener = listenerName == null || listenerName.isEmpty() ?
-            listeners.stream().filter(listener -> TestConstants.TLS_LISTENER_DEFAULT_NAME.equals(listener.getName())).findFirst().orElseThrow(RuntimeException::new) :
-            listeners.stream().filter(listener -> listenerName.equals(listener.getName())).findFirst().orElseThrow(RuntimeException::new);
-        return tlsListener.getConfiguration() == null ?
-            KafkaResources.clusterCaCertificateSecretName(clusterName) : tlsListener.getConfiguration().getBrokerCertChainAndKey().getSecretName();
     }
 
     public static String getKafkaExternalListenerCaCertName(String namespaceName, String clusterName, String listenerName) {
@@ -466,36 +408,6 @@ public class KafkaUtils {
             } else {
                 return KafkaResources.clusterCaCertificateSecretName(clusterName);
             }
-        }
-    }
-
-    public static String changeOrRemoveKafkaVersion(File file, String version) {
-        return changeOrRemoveKafkaConfiguration(file, version, null, null);
-    }
-
-    public static String changeOrRemoveKafkaConfiguration(File file, String version, String logMessageFormat, String interBrokerProtocol) {
-        YAMLMapper mapper = new YAMLMapper();
-        try {
-            JsonNode node = mapper.readTree(file);
-            ObjectNode kafkaNode = (ObjectNode) node.at("/spec/kafka");
-            if (version == null) {
-                kafkaNode.remove("version");
-                ((ObjectNode) kafkaNode.get("config")).remove("log.message.format.version");
-                ((ObjectNode) kafkaNode.get("config")).remove("inter.broker.protocol.version");
-            } else if (!version.equals("")) {
-                kafkaNode.put("version", version);
-                ((ObjectNode) kafkaNode.get("config")).put("log.message.format.version", TestKafkaVersion.getSpecificVersion(version).messageVersion());
-                ((ObjectNode) kafkaNode.get("config")).put("inter.broker.protocol.version", TestKafkaVersion.getSpecificVersion(version).protocolVersion());
-            }
-            if (logMessageFormat != null) {
-                ((ObjectNode) kafkaNode.get("config")).put("log.message.format.version", logMessageFormat);
-            }
-            if (interBrokerProtocol != null) {
-                ((ObjectNode) kafkaNode.get("config")).put("inter.broker.protocol.version", interBrokerProtocol);
-            }
-            return mapper.writeValueAsString(node);
-        } catch (IOException e) {
-            throw new RuntimeException(e);
         }
     }
 
@@ -528,7 +440,7 @@ public class KafkaUtils {
                 kafkaNode.put("version", version);
 
                 if (metadataVersionFieldSupported) {
-                    kafkaNode.put("metadataVersion", TestKafkaVersion.getSpecificVersion(version).messageVersion());
+                    kafkaNode.put("metadataVersion", TestKafkaVersion.getSpecificVersion(version).metadataVersion());
                 }
             }
 

@@ -224,7 +224,7 @@ public class CaReconciler {
         String clientsCaKeyName = KafkaResources.clientsCaKeySecretName(reconciliation.name());
 
         return secretOperator.listAsync(reconciliation.namespace(), Labels.EMPTY.withStrimziKind(reconciliation.kind()).withStrimziCluster(reconciliation.name()))
-                .compose(clusterSecrets -> vertx.executeBlocking(() -> {
+                .compose(clusterSecrets -> {
                     Secret clusterCaCertSecret = null;
                     Secret clusterCaKeySecret = null;
                     Secret clientsCaCertSecret = null;
@@ -267,9 +267,6 @@ public class CaReconciler {
                             clientsCaConfig != null && !clientsCaConfig.isGenerateSecretOwnerReference() ? null : ownerRef,
                             Util.isMaintenanceTimeWindowsSatisfied(reconciliation, maintenanceWindows, clock.instant()));
 
-                    return null;
-                }))
-                .compose(i -> {
                     Promise<Void> caUpdatePromise = Promise.promise();
 
                     List<Future<ReconcileResult<Secret>>> secretReconciliations = new ArrayList<>(2);
@@ -329,7 +326,7 @@ public class CaReconciler {
                     );
 
                     return secretOperator.reconcile(reconciliation, reconciliation.namespace(), KafkaResources.clusterOperatorCertsSecretName(reconciliation.name()), coSecret)
-                            .map((Void) null);
+                            .mapEmpty();
                 });
     }
 
@@ -386,8 +383,8 @@ public class CaReconciler {
                         return Future.succeededFuture();
                     }
 
-                    int clusterCaCertGeneration = clusterCa.certGeneration();
-                    int clusterCaKeyGeneration = clusterCa.keyGeneration();
+                    int clusterCaCertGeneration = clusterCa.caCertGeneration();
+                    int clusterCaKeyGeneration = clusterCa.caKeyGeneration();
 
                     LOGGER.debugCr(reconciliation, "Current cluster CA cert generation {}", clusterCaCertGeneration);
                     LOGGER.debugCr(reconciliation, "Current cluster CA key generation {}", clusterCaKeyGeneration);
@@ -523,7 +520,7 @@ public class CaReconciler {
 
             if (clusterCa.certsRemoved()) {
                 return secretOperator.reconcile(reconciliation, reconciliation.namespace(), AbstractModel.clusterCaCertSecretName(reconciliation.name()), clusterCa.caCertSecret())
-                        .map((Void) null);
+                        .mapEmpty();
             } else {
                 return Future.succeededFuture();
             }

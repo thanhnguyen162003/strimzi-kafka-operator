@@ -153,7 +153,7 @@ public class CruiseControlReconciler {
                             CruiseControlResources.networkPolicyName(reconciliation.name()),
                             cruiseControl != null ? cruiseControl.generateNetworkPolicy(
                                 operatorNamespace, operatorNamespaceLabels, isTopicOperatorEnabled) : null
-                    ).map((Void) null);
+                    ).mapEmpty();
         } else {
             return Future.succeededFuture();
         }
@@ -171,7 +171,7 @@ public class CruiseControlReconciler {
                         reconciliation.namespace(),
                         CruiseControlResources.serviceAccountName(reconciliation.name()),
                         cruiseControl != null ? cruiseControl.generateServiceAccount() : null
-                ).map((Void) null);
+                ).mapEmpty();
     }
 
     /**
@@ -197,11 +197,11 @@ public class CruiseControlReconciler {
                                         reconciliation.namespace(),
                                         CruiseControlResources.configMapName(reconciliation.name()),
                                         configMap
-                                ).map((Void) null);
+                                ).mapEmpty();
                     });
         } else {
             return configMapOperator.reconcile(reconciliation, reconciliation.namespace(), CruiseControlResources.configMapName(reconciliation.name()), null)
-                    .map((Void) null);
+                    .mapEmpty();
         }
     }
 
@@ -229,7 +229,7 @@ public class CruiseControlReconciler {
                     });
         } else {
             return secretOperator.reconcile(reconciliation, reconciliation.namespace(), CruiseControlResources.secretName(reconciliation.name()), null)
-                    .map((Void) null);
+                    .mapEmpty();
         }
     }
 
@@ -276,12 +276,12 @@ public class CruiseControlReconciler {
 
                         this.apiSecretHash = ReconcilerUtils.hashSecretContent(newCcApiUsersSecret);
                         return secretOperator.reconcile(reconciliation, reconciliation.namespace(), CruiseControlResources.apiSecretName(reconciliation.name()), newCcApiUsersSecret)
-                            .map((Void) null);
+                            .mapEmpty();
                     }
                 );
         } else {
             return secretOperator.reconcile(reconciliation, reconciliation.namespace(), CruiseControlResources.apiSecretName(reconciliation.name()), null)
-                    .map((Void) null);
+                    .mapEmpty();
         }
     }
 
@@ -297,7 +297,7 @@ public class CruiseControlReconciler {
                         reconciliation.namespace(),
                         CruiseControlResources.serviceName(reconciliation.name()),
                         cruiseControl != null ? cruiseControl.generateService() : null
-                ).map((Void) null);
+                ).mapEmpty();
     }
 
     /**
@@ -310,7 +310,7 @@ public class CruiseControlReconciler {
             Map<String, String> podAnnotations = new LinkedHashMap<>();
             podAnnotations.put(Ca.ANNO_STRIMZI_IO_CLUSTER_CA_CERT_GENERATION, String.valueOf(clusterCa.caCertGeneration()));
             podAnnotations.put(Ca.ANNO_STRIMZI_IO_CLUSTER_CA_KEY_GENERATION, String.valueOf(clusterCa.caKeyGeneration()));
-            podAnnotations.put(CruiseControl.ANNO_STRIMZI_SERVER_CONFIGURATION_HASH, serverConfigurationHash);
+            podAnnotations.put(Annotations.ANNO_STRIMZI_IO_CONFIGURATION_HASH, serverConfigurationHash);
             podAnnotations.put(CruiseControl.ANNO_STRIMZI_CAPACITY_CONFIGURATION_HASH, capacityConfigurationHash);
             podAnnotations.put(Annotations.ANNO_STRIMZI_AUTH_HASH, apiSecretHash);
             podAnnotations.put(Annotations.ANNO_STRIMZI_SERVER_CERT_HASH, certificateHash);
@@ -319,10 +319,10 @@ public class CruiseControlReconciler {
 
             return deploymentOperator
                     .reconcile(reconciliation, reconciliation.namespace(), CruiseControlResources.componentName(reconciliation.name()), deployment)
-                    .map((Void) null);
+                    .mapEmpty();
         } else {
             return deploymentOperator.reconcile(reconciliation, reconciliation.namespace(), CruiseControlResources.componentName(reconciliation.name()), null)
-                    .map((Void) null);
+                    .mapEmpty();
         }
     }
 

@@ -9,6 +9,7 @@ import io.fabric8.kubernetes.api.model.LabelSelector;
 import io.fabric8.kubernetes.api.model.Pod;
 import io.fabric8.kubernetes.client.readiness.Readiness;
 import io.strimzi.systemtest.TestConstants;
+import io.strimzi.systemtest.resources.ResourceManager;
 import io.strimzi.systemtest.resources.ResourceOperation;
 import io.strimzi.systemtest.storage.TestStorage;
 import io.strimzi.test.TestUtils;
@@ -322,12 +323,13 @@ public class PodUtils {
      * Retrieves a list of Kafka cluster Pods based on TestStorage cluster name attribute {@code testStorage.getClusterName()}.
      *
      * @param testStorage   TestStorage of specific test case
-     * @return              Returns a list of Kafka cluster Pods (i.e.., Kafka, ZooKeeper, EO).
+     * @return              Returns a list of Kafka cluster Pods (i.e.., Kafka brokers, controllers, EO).
      */
     public static List<Pod> getKafkaClusterPods(final TestStorage testStorage) {
+        // broker pods
         List<Pod> kafkaClusterPods = kubeClient(testStorage.getNamespaceName())
             .listPodsByPrefixInName(testStorage.getBrokerComponentName());
-        // zk pods
+        // controller pods
         kafkaClusterPods.addAll(kubeClient(testStorage.getNamespaceName())
             .listPodsByPrefixInName(testStorage.getControllerComponentName()));
         // eo pod
@@ -335,5 +337,11 @@ public class PodUtils {
             .listPodsByPrefixInName(testStorage.getEoDeploymentName()));
 
         return kafkaClusterPods;
+    }
+
+    public static void annotatePod(String namespaceName, String podName, String annotationKey, String annotationValue) {
+        LOGGER.info("Annotating Pod: {}/{} with annotation {}={}", namespaceName, podName, annotationKey, annotationValue);
+        ResourceManager.cmdKubeClient().namespace(namespaceName)
+                .execInCurrentNamespace("annotate", "pod", podName, annotationKey + "=" + annotationValue);
     }
 }

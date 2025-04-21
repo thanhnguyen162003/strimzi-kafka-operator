@@ -265,9 +265,9 @@ public class ResourceUtils {
 
         DescribeTopicsResult dtr;
         try {
-            Constructor<DescribeTopicsResult> declaredConstructor = DescribeTopicsResult.class.getDeclaredConstructor(Map.class);
+            Constructor<DescribeTopicsResult> declaredConstructor = DescribeTopicsResult.class.getDeclaredConstructor(Map.class, Map.class);
             declaredConstructor.setAccessible(true);
-            dtr = declaredConstructor.newInstance(emptyMap());
+            dtr = declaredConstructor.newInstance(null, emptyMap());
         } catch (ReflectiveOperationException e) {
             throw new RuntimeException(e);
         }
@@ -362,17 +362,7 @@ public class ResourceUtils {
             }
 
             @Override
-            public Admin createControllerAdminClient(String controllerBootstrapHostnames, PemTrustSet kafkaCaTrustSet, PemAuthIdentity authIdentity) {
-                return createControllerAdminClient(controllerBootstrapHostnames, kafkaCaTrustSet, authIdentity, new Properties());
-            }
-
-            @Override
             public Admin createAdminClient(String bootstrapHostnames, PemTrustSet kafkaCaTrustSet, PemAuthIdentity authIdentity, Properties config) {
-                return mockAdminClient;
-            }
-
-            @Override
-            public Admin createControllerAdminClient(String controllerBootstrapHostnames, PemTrustSet kafkaCaTrustSet, PemAuthIdentity authIdentity, Properties config) {
                 return mockAdminClient;
             }
         };

@@ -16,7 +16,6 @@ import io.strimzi.systemtest.performance.gather.schedulers.UserOperatorMetricsCo
 import io.strimzi.systemtest.performance.report.UserOperatorPerformanceReporter;
 import io.strimzi.systemtest.performance.report.parser.TopicOperatorMetricsParser;
 import io.strimzi.systemtest.performance.utils.UserOperatorPerformanceUtils;
-import io.strimzi.systemtest.resources.NodePoolsConverter;
 import io.strimzi.systemtest.storage.TestStorage;
 import io.strimzi.systemtest.templates.crd.KafkaNodePoolTemplates;
 import io.strimzi.systemtest.templates.crd.KafkaTemplates;
@@ -42,7 +41,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.stream.Stream;
 
-import static io.strimzi.systemtest.TestTags.CAPACITY;
+import static io.strimzi.systemtest.TestTags.USER_CAPACITY;
 import static io.strimzi.systemtest.resources.ResourceManager.kubeClient;
 
 public class UserOperatorPerformance extends AbstractST {
@@ -94,7 +93,7 @@ public class UserOperatorPerformance extends AbstractST {
         );
     }
 
-    @Tag(CAPACITY)
+    @Tag(USER_CAPACITY)
     @ParameterizedTest
     @MethodSource("provideConfigurationsForCapacity")
     void testCapacity(String controllerThreadPoolSize, String cacheRefreshIntervalMs, String batchQueueSize,
@@ -107,20 +106,18 @@ public class UserOperatorPerformance extends AbstractST {
 
         try {
             resourceManager.createResourceWithWait(
-                NodePoolsConverter.convertNodePoolsIfNeeded(
-                    KafkaNodePoolTemplates.brokerPoolPersistentStorage(testStorage.getNamespaceName(), testStorage.getBrokerPoolName(), testStorage.getClusterName(), brokerReplicas)
-                        .editSpec()
-                            .withNewPersistentClaimStorage()
-                                .withSize("10Gi")
-                            .endPersistentClaimStorage()
-                        .endSpec()
-                        .build(),
-                    KafkaNodePoolTemplates.controllerPoolPersistentStorage(testStorage.getNamespaceName(), testStorage.getControllerPoolName(), testStorage.getClusterName(), controllerReplicas).build()
-                )
+                KafkaNodePoolTemplates.brokerPoolPersistentStorage(testStorage.getNamespaceName(), testStorage.getBrokerPoolName(), testStorage.getClusterName(), brokerReplicas)
+                    .editSpec()
+                        .withNewPersistentClaimStorage()
+                            .withSize("10Gi")
+                        .endPersistentClaimStorage()
+                    .endSpec()
+                    .build(),
+                KafkaNodePoolTemplates.controllerPoolPersistentStorage(testStorage.getNamespaceName(), testStorage.getControllerPoolName(), testStorage.getClusterName(), controllerReplicas).build()
             );
             resourceManager.createResourceWithWait(
                 KafkaTemplates.kafkaMetricsConfigMap(testStorage.getNamespaceName(), testStorage.getClusterName()),
-                KafkaTemplates.kafkaWithMetrics(testStorage.getNamespaceName(), testStorage.getClusterName(), brokerReplicas, controllerReplicas)
+                KafkaTemplates.kafkaWithMetrics(testStorage.getNamespaceName(), testStorage.getClusterName(), brokerReplicas)
                     .editSpec()
                         .editEntityOperator()
                             .editUserOperator()

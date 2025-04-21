@@ -256,13 +256,13 @@ public class KafkaClusterTest {
         assertThat(headless.getMetadata().getLabels().containsKey(Labels.STRIMZI_DISCOVERY_LABEL), is(false));
     }
 
-    private Secret generateBrokerSecret(Set<String> externalBootstrapAddress, Map<Integer, Set<String>> externalAddresses) {
+    private List<Secret> generateBrokerSecrets(Set<String> externalBootstrapAddress, Map<Integer, Set<String>> externalAddresses) {
         ClusterCa clusterCa = new ClusterCa(Reconciliation.DUMMY_RECONCILIATION, new OpenSslCertManager(), new PasswordGenerator(10, "a", "a"), CLUSTER, null, null);
         clusterCa.createRenewOrReplace(NAMESPACE, Map.of(), Map.of(), Map.of(), null, true);
         ClientsCa clientsCa = new ClientsCa(Reconciliation.DUMMY_RECONCILIATION, new OpenSslCertManager(), new PasswordGenerator(10, "a", "a"), null, null, null, null, 365, 30, true, CertificateExpirationPolicy.RENEW_CERTIFICATE);
         clientsCa.createRenewOrReplace(NAMESPACE, Map.of(), Map.of(), Map.of(), null, true);
 
-        return KC.generateCertificatesSecret(clusterCa, clientsCa, null, externalBootstrapAddress, externalAddresses, true);
+        return KC.generateCertificatesSecrets(clusterCa, clientsCa, List.of(), externalBootstrapAddress, externalAddresses, true);
     }
 
     //////////
@@ -1140,10 +1140,20 @@ public class KafkaClusterTest {
     }
 
     @ParallelTest
-    public void testPerBrokerConfigMaps() {
+    public void testPerBrokerConfigMapsLog4j1() {
         MetricsAndLogging metricsAndLogging = new MetricsAndLogging(null, null);
-        KafkaCluster kc = KafkaCluster.fromCrd(Reconciliation.DUMMY_RECONCILIATION, KAFKA, POOLS, VERSIONS, KafkaVersionTestUtils.DEFAULT_KRAFT_VERSION_CHANGE, "dummy-cluster-id", SHARED_ENV_PROVIDER);
+        KafkaVersionChange versionChange = new KafkaVersionChange(KafkaVersionTestUtils.getKafkaVersionLookup().version("3.9.0"), KafkaVersionTestUtils.getKafkaVersionLookup().version("3.9.0"), null, null, "3.9");
+        Kafka kafka = new KafkaBuilder(KAFKA)
+                .editSpec()
+                    .editKafka()
+                        .withVersion("3.9.0")
+                    .endKafka()
+                .endSpec()
+                .build();
+        KafkaCluster kc = KafkaCluster.fromCrd(Reconciliation.DUMMY_RECONCILIATION, kafka, POOLS, VERSIONS, versionChange, "dummy-cluster-id", SHARED_ENV_PROVIDER);
         List<ConfigMap> cms = kc.generatePerBrokerConfigurationConfigMaps(metricsAndLogging, ADVERTISED_HOSTNAMES, ADVERTISED_PORTS);
+
+        assertThat(kc.logging().isLog4j2(), is(false));
 
         assertThat(cms.size(), is(8));
 
@@ -1153,6 +1163,7 @@ public class KafkaClusterTest {
             if (cm.getMetadata().getName().contains("controllers")) {
                 assertThat(cm.getData().size(), is(5));
                 assertThat(cm.getData().get(LoggingModel.LOG4J1_CONFIG_MAP_KEY), is(notNullValue()));
+                assertThat(cm.getData().get(LoggingModel.LOG4J2_CONFIG_MAP_KEY), is(nullValue()));
                 assertThat(cm.getData().get(KafkaCluster.BROKER_CONFIGURATION_FILENAME), is(notNullValue()));
                 assertThat(cm.getData().get(KafkaCluster.BROKER_CONFIGURATION_FILENAME), CoreMatchers.containsString("process.roles=controller\n"));
                 assertThat(cm.getData().get(KafkaCluster.BROKER_LISTENERS_FILENAME), is(nullValue()));
@@ -1160,6 +1171,7 @@ public class KafkaClusterTest {
             } else if (cm.getMetadata().getName().contains("brokers")) {
                 assertThat(cm.getData().size(), is(5));
                 assertThat(cm.getData().get(LoggingModel.LOG4J1_CONFIG_MAP_KEY), is(notNullValue()));
+                assertThat(cm.getData().get(LoggingModel.LOG4J2_CONFIG_MAP_KEY), is(nullValue()));
                 assertThat(cm.getData().get(KafkaCluster.BROKER_CONFIGURATION_FILENAME), is(notNullValue()));
                 assertThat(cm.getData().get(KafkaCluster.BROKER_CONFIGURATION_FILENAME), CoreMatchers.containsString("process.roles=broker\n"));
                 assertThat(cm.getData().get(KafkaCluster.BROKER_LISTENERS_FILENAME), is("PLAIN_9092 TLS_9093"));
@@ -1167,6 +1179,48 @@ public class KafkaClusterTest {
             } else {
                 assertThat(cm.getData().size(), is(5));
                 assertThat(cm.getData().get(LoggingModel.LOG4J1_CONFIG_MAP_KEY), is(notNullValue()));
+                assertThat(cm.getData().get(LoggingModel.LOG4J2_CONFIG_MAP_KEY), is(nullValue()));
+                assertThat(cm.getData().get(KafkaCluster.BROKER_CONFIGURATION_FILENAME), is(notNullValue()));
+                assertThat(cm.getData().get(KafkaCluster.BROKER_CONFIGURATION_FILENAME), CoreMatchers.containsString("process.roles=broker,controller\n"));
+                assertThat(cm.getData().get(KafkaCluster.BROKER_LISTENERS_FILENAME), is("PLAIN_9092 TLS_9093"));
+                assertThat(cm.getData().get(KafkaCluster.BROKER_CLUSTER_ID_FILENAME), is("dummy-cluster-id"));
+            }
+        }
+    }
+
+    @ParallelTest
+    public void testPerBrokerConfigMaps() {
+        MetricsAndLogging metricsAndLogging = new MetricsAndLogging(null, null);
+        KafkaCluster kc = KafkaCluster.fromCrd(Reconciliation.DUMMY_RECONCILIATION, KAFKA, POOLS, VERSIONS, KafkaVersionTestUtils.DEFAULT_KRAFT_VERSION_CHANGE, "dummy-cluster-id", SHARED_ENV_PROVIDER);
+        List<ConfigMap> cms = kc.generatePerBrokerConfigurationConfigMaps(metricsAndLogging, ADVERTISED_HOSTNAMES, ADVERTISED_PORTS);
+
+        assertThat(kc.logging().isLog4j2(), is(true));
+
+        assertThat(cms.size(), is(8));
+
+        for (ConfigMap cm : cms)    {
+            assertThat(cm.getMetadata().getName(), startsWith("foo-"));
+
+            if (cm.getMetadata().getName().contains("controllers")) {
+                assertThat(cm.getData().size(), is(5));
+                assertThat(cm.getData().get(LoggingModel.LOG4J1_CONFIG_MAP_KEY), is(nullValue()));
+                assertThat(cm.getData().get(LoggingModel.LOG4J2_CONFIG_MAP_KEY), is(notNullValue()));
+                assertThat(cm.getData().get(KafkaCluster.BROKER_CONFIGURATION_FILENAME), is(notNullValue()));
+                assertThat(cm.getData().get(KafkaCluster.BROKER_CONFIGURATION_FILENAME), CoreMatchers.containsString("process.roles=controller\n"));
+                assertThat(cm.getData().get(KafkaCluster.BROKER_LISTENERS_FILENAME), is(nullValue()));
+                assertThat(cm.getData().get(KafkaCluster.BROKER_CLUSTER_ID_FILENAME), is("dummy-cluster-id"));
+            } else if (cm.getMetadata().getName().contains("brokers")) {
+                assertThat(cm.getData().size(), is(5));
+                assertThat(cm.getData().get(LoggingModel.LOG4J1_CONFIG_MAP_KEY), is(nullValue()));
+                assertThat(cm.getData().get(LoggingModel.LOG4J2_CONFIG_MAP_KEY), is(notNullValue()));
+                assertThat(cm.getData().get(KafkaCluster.BROKER_CONFIGURATION_FILENAME), is(notNullValue()));
+                assertThat(cm.getData().get(KafkaCluster.BROKER_CONFIGURATION_FILENAME), CoreMatchers.containsString("process.roles=broker\n"));
+                assertThat(cm.getData().get(KafkaCluster.BROKER_LISTENERS_FILENAME), is("PLAIN_9092 TLS_9093"));
+                assertThat(cm.getData().get(KafkaCluster.BROKER_CLUSTER_ID_FILENAME), is("dummy-cluster-id"));
+            } else {
+                assertThat(cm.getData().size(), is(5));
+                assertThat(cm.getData().get(LoggingModel.LOG4J1_CONFIG_MAP_KEY), is(nullValue()));
+                assertThat(cm.getData().get(LoggingModel.LOG4J2_CONFIG_MAP_KEY), is(notNullValue()));
                 assertThat(cm.getData().get(KafkaCluster.BROKER_CONFIGURATION_FILENAME), is(notNullValue()));
                 assertThat(cm.getData().get(KafkaCluster.BROKER_CONFIGURATION_FILENAME), CoreMatchers.containsString("process.roles=broker,controller\n"));
                 assertThat(cm.getData().get(KafkaCluster.BROKER_LISTENERS_FILENAME), is("PLAIN_9092 TLS_9093"));
@@ -1177,8 +1231,14 @@ public class KafkaClusterTest {
 
     @ParallelTest
     public void testGenerateBrokerSecret() throws CertificateParsingException {
-        Secret secret = generateBrokerSecret(null, Map.of());
-        assertThat(secret.getData().keySet(), is(Set.of(
+        List<Secret> secrets = generateBrokerSecrets(null, Map.of());
+        Set<String> secretDataKeys = new HashSet<>();
+        Map<String, Secret> secretMap = new HashMap<>();
+        secrets.forEach(secret -> {
+            secretDataKeys.addAll(secret.getData().keySet());
+            secretMap.put(secret.getMetadata().getName(), secret);
+        });
+        assertThat(secretDataKeys, is(Set.of(
                 "foo-controllers-0.crt",  "foo-controllers-0.key",
                 "foo-controllers-1.crt", "foo-controllers-1.key",
                 "foo-controllers-2.crt", "foo-controllers-2.key",
@@ -1188,7 +1248,7 @@ public class KafkaClusterTest {
                 "foo-brokers-6.crt", "foo-brokers-6.key",
                 "foo-brokers-7.crt", "foo-brokers-7.key")));
 
-        X509Certificate cert = Ca.cert(secret, "foo-controllers-0.crt");
+        X509Certificate cert = Ca.cert(secretMap.get("foo-controllers-0"), "foo-controllers-0.crt");
         assertThat(cert.getSubjectX500Principal().getName(), is("CN=foo-kafka,O=io.strimzi"));
         assertThat(cert.getSubjectAlternativeNames().size(), is(10));
         assertThat(new HashSet<Object>(cert.getSubjectAlternativeNames()), is(Set.of(
@@ -1203,7 +1263,7 @@ public class KafkaClusterTest {
                 List.of(2, "foo-kafka-brokers.test.svc"),
                 List.of(2, "foo-kafka-brokers.test.svc.cluster.local"))));
 
-        cert = Ca.cert(secret, "foo-mixed-3.crt");
+        cert = Ca.cert(secretMap.get("foo-mixed-3"), "foo-mixed-3.crt");
         assertThat(cert.getSubjectX500Principal().getName(), is("CN=foo-kafka,O=io.strimzi"));
         assertThat(cert.getSubjectAlternativeNames().size(), is(10));
         assertThat(new HashSet<Object>(cert.getSubjectAlternativeNames()), is(Set.of(
@@ -1218,7 +1278,7 @@ public class KafkaClusterTest {
                 List.of(2, "foo-kafka-brokers.test.svc"),
                 List.of(2, "foo-kafka-brokers.test.svc.cluster.local"))));
 
-        cert = Ca.cert(secret, "foo-brokers-6.crt");
+        cert = Ca.cert(secretMap.get("foo-brokers-6"), "foo-brokers-6.crt");
         assertThat(cert.getSubjectX500Principal().getName(), is("CN=foo-kafka,O=io.strimzi"));
         assertThat(cert.getSubjectAlternativeNames().size(), is(10));
         assertThat(new HashSet<Object>(cert.getSubjectAlternativeNames()), is(Set.of(
@@ -1241,8 +1301,14 @@ public class KafkaClusterTest {
                 3, Set.of("123.10.125.133"),
                 6, Set.of("123.10.125.136"));
 
-        Secret secret = generateBrokerSecret(Set.of("123.10.125.140"), externalAddresses);
-        assertThat(secret.getData().keySet(), is(Set.of(
+        List<Secret> secrets = generateBrokerSecrets(Set.of("123.10.125.140"), externalAddresses);
+        Set<String> secretDataKeys = new HashSet<>();
+        Map<String, Secret> secretMap = new HashMap<>();
+        secrets.forEach(secret -> {
+            secretDataKeys.addAll(secret.getData().keySet());
+            secretMap.put(secret.getMetadata().getName(), secret);
+        });
+        assertThat(secretDataKeys, is(Set.of(
                 "foo-controllers-0.crt",  "foo-controllers-0.key",
                 "foo-controllers-1.crt", "foo-controllers-1.key",
                 "foo-controllers-2.crt", "foo-controllers-2.key",
@@ -1252,7 +1318,7 @@ public class KafkaClusterTest {
                 "foo-brokers-6.crt", "foo-brokers-6.key",
                 "foo-brokers-7.crt", "foo-brokers-7.key")));
 
-        X509Certificate cert = Ca.cert(secret, "foo-controllers-0.crt");
+        X509Certificate cert = Ca.cert(secretMap.get("foo-controllers-0"), "foo-controllers-0.crt");
         assertThat(cert.getSubjectX500Principal().getName(), is("CN=foo-kafka,O=io.strimzi"));
         assertThat(cert.getSubjectAlternativeNames().size(), is(10));
         assertThat(new HashSet<Object>(cert.getSubjectAlternativeNames()), is(Set.of(
@@ -1267,7 +1333,7 @@ public class KafkaClusterTest {
                 List.of(2, "foo-kafka-brokers.test.svc"),
                 List.of(2, "foo-kafka-brokers.test.svc.cluster.local"))));
 
-        cert = Ca.cert(secret, "foo-mixed-3.crt");
+        cert = Ca.cert(secretMap.get("foo-mixed-3"), "foo-mixed-3.crt");
         assertThat(cert.getSubjectX500Principal().getName(), is("CN=foo-kafka,O=io.strimzi"));
         assertThat(cert.getSubjectAlternativeNames().size(), is(12));
         assertThat(new HashSet<Object>(cert.getSubjectAlternativeNames()), is(Set.of(
@@ -1284,7 +1350,7 @@ public class KafkaClusterTest {
                 List.of(7, "123.10.125.140"),
                 List.of(7, "123.10.125.133"))));
 
-        cert = Ca.cert(secret, "foo-brokers-6.crt");
+        cert = Ca.cert(secretMap.get("foo-brokers-6"), "foo-brokers-6.crt");
         assertThat(cert.getSubjectX500Principal().getName(), is("CN=foo-kafka,O=io.strimzi"));
         assertThat(cert.getSubjectAlternativeNames().size(), is(12));
         assertThat(new HashSet<Object>(cert.getSubjectAlternativeNames()), is(Set.of(
@@ -1309,8 +1375,15 @@ public class KafkaClusterTest {
                 3, Set.of("123.10.125.133", "my-broker-3"),
                 6, Set.of("123.10.125.136", "my-broker-6"));
 
-        Secret secret = generateBrokerSecret(Set.of("123.10.125.140", "my-bootstrap"), externalAddresses);
-        assertThat(secret.getData().keySet(), is(Set.of(
+        List<Secret> secrets = generateBrokerSecrets(Set.of("123.10.125.140", "my-bootstrap"), externalAddresses);
+        Set<String> secretDataKeys = new HashSet<>();
+        Map<String, Secret> secretMap = new HashMap<>();
+        secrets.forEach(secret -> {
+            secretDataKeys.addAll(secret.getData().keySet());
+            secretMap.put(secret.getMetadata().getName(), secret);
+        });
+
+        assertThat(secretDataKeys, is(Set.of(
                 "foo-controllers-0.crt",  "foo-controllers-0.key",
                 "foo-controllers-1.crt", "foo-controllers-1.key",
                 "foo-controllers-2.crt", "foo-controllers-2.key",
@@ -1320,7 +1393,7 @@ public class KafkaClusterTest {
                 "foo-brokers-6.crt", "foo-brokers-6.key",
                 "foo-brokers-7.crt", "foo-brokers-7.key")));
 
-        X509Certificate cert = Ca.cert(secret, "foo-controllers-0.crt");
+        X509Certificate cert = Ca.cert(secretMap.get("foo-controllers-0"), "foo-controllers-0.crt");
         assertThat(cert.getSubjectX500Principal().getName(), is("CN=foo-kafka,O=io.strimzi"));
         assertThat(cert.getSubjectAlternativeNames().size(), is(10));
         assertThat(new HashSet<Object>(cert.getSubjectAlternativeNames()), is(Set.of(
@@ -1335,7 +1408,7 @@ public class KafkaClusterTest {
                 List.of(2, "foo-kafka-brokers.test.svc"),
                 List.of(2, "foo-kafka-brokers.test.svc.cluster.local"))));
 
-        cert = Ca.cert(secret, "foo-mixed-3.crt");
+        cert = Ca.cert(secretMap.get("foo-mixed-3"), "foo-mixed-3.crt");
         assertThat(cert.getSubjectX500Principal().getName(), is("CN=foo-kafka,O=io.strimzi"));
         assertThat(cert.getSubjectAlternativeNames().size(), is(14));
         assertThat(new HashSet<Object>(cert.getSubjectAlternativeNames()), is(Set.of(
@@ -1354,7 +1427,7 @@ public class KafkaClusterTest {
                 List.of(7, "123.10.125.140"),
                 List.of(7, "123.10.125.133"))));
 
-        cert = Ca.cert(secret, "foo-brokers-6.crt");
+        cert = Ca.cert(secretMap.get("foo-brokers-6"), "foo-brokers-6.crt");
         assertThat(cert.getSubjectX500Principal().getName(), is("CN=foo-kafka,O=io.strimzi"));
         assertThat(cert.getSubjectAlternativeNames().size(), is(14));
         assertThat(new HashSet<Object>(cert.getSubjectAlternativeNames()), is(Set.of(
@@ -2197,7 +2270,7 @@ public class KafkaClusterTest {
 
         // Minimum supported versions
         assertDoesNotThrow(() -> KafkaCluster.validateMetadataVersion("3.3"));
-        assertDoesNotThrow(() -> KafkaCluster.validateMetadataVersion("3.3-IV0"));
+        assertDoesNotThrow(() -> KafkaCluster.validateMetadataVersion("3.3-IV3"));
 
         // Invalid Values
         InvalidResourceException e = assertThrows(InvalidResourceException.class, () -> KafkaCluster.validateMetadataVersion("3.6-IV9"));
@@ -2207,10 +2280,10 @@ public class KafkaClusterTest {
         assertThat(e.getMessage(), containsString("Metadata version 3 is invalid"));
 
         e = assertThrows(InvalidResourceException.class, () -> KafkaCluster.validateMetadataVersion("3.2"));
-        assertThat(e.getMessage(), containsString("The oldest supported metadata version is 3.3-IV0"));
+        assertThat(e.getMessage(), containsString("Metadata version 3.2 is invalid"));
 
         e = assertThrows(InvalidResourceException.class, () -> KafkaCluster.validateMetadataVersion("3.2-IV0"));
-        assertThat(e.getMessage(), containsString("The oldest supported metadata version is 3.3-IV0"));
+        assertThat(e.getMessage(), containsString("Metadata version 3.2-IV0 is invalid"));
     }
 
     @ParallelTest
@@ -3313,7 +3386,7 @@ public class KafkaClusterTest {
         assertThat(pods.size(), is(3));
 
         for (Pod pod : pods)  {
-            assertThat(pod.getMetadata().getLabels().entrySet().containsAll(KC.labels.withStrimziPodName(pod.getMetadata().getName()).withStatefulSetPod(pod.getMetadata().getName()).withStrimziPodSetController(CLUSTER + "-controllers").toMap().entrySet()), is(true));
+            assertThat(pod.getMetadata().getLabels().entrySet().containsAll(KC.labels.withStrimziPodName(pod.getMetadata().getName()).withStrimziPodSetController(CLUSTER + "-controllers").toMap().entrySet()), is(true));
             assertThat(pod.getMetadata().getAnnotations().size(), is(2));
             assertThat(pod.getMetadata().getAnnotations().get(PodRevision.STRIMZI_REVISION_ANNOTATION), is(notNullValue()));
             assertThat(pod.getMetadata().getAnnotations().get("test-anno"), is("test-value"));
@@ -3355,7 +3428,7 @@ public class KafkaClusterTest {
             assertThat(pod.getSpec().getVolumes().get(2).getName(), is(KafkaCluster.CLUSTER_CA_CERTS_VOLUME));
             assertThat(pod.getSpec().getVolumes().get(2).getSecret().getSecretName(), is("foo-cluster-ca-cert"));
             assertThat(pod.getSpec().getVolumes().get(3).getName(), is(KafkaCluster.BROKER_CERTS_VOLUME));
-            assertThat(pod.getSpec().getVolumes().get(3).getSecret().getSecretName(), is("foo-kafka-brokers"));
+            assertThat(pod.getSpec().getVolumes().get(3).getSecret().getSecretName(), is(pod.getMetadata().getName()));
             assertThat(pod.getSpec().getVolumes().get(4).getName(), is(KafkaCluster.CLIENT_CA_CERTS_VOLUME));
             assertThat(pod.getSpec().getVolumes().get(4).getSecret().getSecretName(), is("foo-clients-ca-cert"));
             assertThat(pod.getSpec().getVolumes().get(5).getName(), is("kafka-metrics-and-logging"));
@@ -3379,7 +3452,7 @@ public class KafkaClusterTest {
         assertThat(pods.size(), is(2));
 
         for (Pod pod : pods)  {
-            assertThat(pod.getMetadata().getLabels().entrySet().containsAll(KC.labels.withStrimziPodName(pod.getMetadata().getName()).withStatefulSetPod(pod.getMetadata().getName()).withStrimziPodSetController(CLUSTER + "-mixed").toMap().entrySet()), is(true));
+            assertThat(pod.getMetadata().getLabels().entrySet().containsAll(KC.labels.withStrimziPodName(pod.getMetadata().getName()).withStrimziPodSetController(CLUSTER + "-mixed").toMap().entrySet()), is(true));
             assertThat(pod.getMetadata().getAnnotations().size(), is(2));
             assertThat(pod.getMetadata().getAnnotations().get(PodRevision.STRIMZI_REVISION_ANNOTATION), is(notNullValue()));
             assertThat(pod.getMetadata().getAnnotations().get("test-anno"), is("test-value"));
@@ -3421,7 +3494,7 @@ public class KafkaClusterTest {
             assertThat(pod.getSpec().getVolumes().get(2).getName(), is(KafkaCluster.CLUSTER_CA_CERTS_VOLUME));
             assertThat(pod.getSpec().getVolumes().get(2).getSecret().getSecretName(), is("foo-cluster-ca-cert"));
             assertThat(pod.getSpec().getVolumes().get(3).getName(), is(KafkaCluster.BROKER_CERTS_VOLUME));
-            assertThat(pod.getSpec().getVolumes().get(3).getSecret().getSecretName(), is("foo-kafka-brokers"));
+            assertThat(pod.getSpec().getVolumes().get(3).getSecret().getSecretName(), is(pod.getMetadata().getName()));
             assertThat(pod.getSpec().getVolumes().get(4).getName(), is(KafkaCluster.CLIENT_CA_CERTS_VOLUME));
             assertThat(pod.getSpec().getVolumes().get(4).getSecret().getSecretName(), is("foo-clients-ca-cert"));
             assertThat(pod.getSpec().getVolumes().get(5).getName(), is("kafka-metrics-and-logging"));
@@ -3445,7 +3518,7 @@ public class KafkaClusterTest {
         assertThat(pods.size(), is(3));
 
         for (Pod pod : pods)  {
-            assertThat(pod.getMetadata().getLabels().entrySet().containsAll(KC.labels.withStrimziPodName(pod.getMetadata().getName()).withStatefulSetPod(pod.getMetadata().getName()).withStrimziPodSetController(CLUSTER + "-brokers").toMap().entrySet()), is(true));
+            assertThat(pod.getMetadata().getLabels().entrySet().containsAll(KC.labels.withStrimziPodName(pod.getMetadata().getName()).withStrimziPodSetController(CLUSTER + "-brokers").toMap().entrySet()), is(true));
             assertThat(pod.getMetadata().getAnnotations().size(), is(2));
             assertThat(pod.getMetadata().getAnnotations().get(PodRevision.STRIMZI_REVISION_ANNOTATION), is(notNullValue()));
             assertThat(pod.getMetadata().getAnnotations().get("test-anno"), is("test-value"));
@@ -3487,7 +3560,7 @@ public class KafkaClusterTest {
             assertThat(pod.getSpec().getVolumes().get(2).getName(), is(KafkaCluster.CLUSTER_CA_CERTS_VOLUME));
             assertThat(pod.getSpec().getVolumes().get(2).getSecret().getSecretName(), is("foo-cluster-ca-cert"));
             assertThat(pod.getSpec().getVolumes().get(3).getName(), is(KafkaCluster.BROKER_CERTS_VOLUME));
-            assertThat(pod.getSpec().getVolumes().get(3).getSecret().getSecretName(), is("foo-kafka-brokers"));
+            assertThat(pod.getSpec().getVolumes().get(3).getSecret().getSecretName(), is(pod.getMetadata().getName()));
             assertThat(pod.getSpec().getVolumes().get(4).getName(), is(KafkaCluster.CLIENT_CA_CERTS_VOLUME));
             assertThat(pod.getSpec().getVolumes().get(4).getSecret().getSecretName(), is("foo-clients-ca-cert"));
             assertThat(pod.getSpec().getVolumes().get(5).getName(), is("kafka-metrics-and-logging"));
@@ -3711,7 +3784,7 @@ public class KafkaClusterTest {
                 assertThat(pod.getSpec().getVolumes().get(2).getName(), is(KafkaCluster.CLUSTER_CA_CERTS_VOLUME));
                 assertThat(pod.getSpec().getVolumes().get(2).getSecret().getSecretName(), is("foo-cluster-ca-cert"));
                 assertThat(pod.getSpec().getVolumes().get(3).getName(), is(KafkaCluster.BROKER_CERTS_VOLUME));
-                assertThat(pod.getSpec().getVolumes().get(3).getSecret().getSecretName(), is("foo-kafka-brokers"));
+                assertThat(pod.getSpec().getVolumes().get(3).getSecret().getSecretName(), is(pod.getMetadata().getName()));
                 assertThat(pod.getSpec().getVolumes().get(4).getName(), is(KafkaCluster.CLIENT_CA_CERTS_VOLUME));
                 assertThat(pod.getSpec().getVolumes().get(4).getSecret().getSecretName(), is("foo-clients-ca-cert"));
                 assertThat(pod.getSpec().getVolumes().get(5).getName(), is("kafka-metrics-and-logging"));
@@ -4054,7 +4127,7 @@ public class KafkaClusterTest {
                     assertThat(pod.getSpec().getVolumes().get(2).getName(), is(KafkaCluster.CLUSTER_CA_CERTS_VOLUME));
                     assertThat(pod.getSpec().getVolumes().get(2).getSecret().getSecretName(), is("foo-cluster-ca-cert"));
                     assertThat(pod.getSpec().getVolumes().get(3).getName(), is(KafkaCluster.BROKER_CERTS_VOLUME));
-                    assertThat(pod.getSpec().getVolumes().get(3).getSecret().getSecretName(), is("foo-kafka-brokers"));
+                    assertThat(pod.getSpec().getVolumes().get(3).getSecret().getSecretName(), is(pod.getMetadata().getName()));
                     assertThat(pod.getSpec().getVolumes().get(4).getName(), is(KafkaCluster.CLIENT_CA_CERTS_VOLUME));
                     assertThat(pod.getSpec().getVolumes().get(4).getSecret().getSecretName(), is("foo-clients-ca-cert"));
                     assertThat(pod.getSpec().getVolumes().get(5).getName(), is("kafka-metrics-and-logging"));
@@ -4116,7 +4189,7 @@ public class KafkaClusterTest {
                     assertThat(pod.getSpec().getVolumes().get(2).getName(), is(KafkaCluster.CLUSTER_CA_CERTS_VOLUME));
                     assertThat(pod.getSpec().getVolumes().get(2).getSecret().getSecretName(), is("foo-cluster-ca-cert"));
                     assertThat(pod.getSpec().getVolumes().get(3).getName(), is(KafkaCluster.BROKER_CERTS_VOLUME));
-                    assertThat(pod.getSpec().getVolumes().get(3).getSecret().getSecretName(), is("foo-kafka-brokers"));
+                    assertThat(pod.getSpec().getVolumes().get(3).getSecret().getSecretName(), is(pod.getMetadata().getName()));
                     assertThat(pod.getSpec().getVolumes().get(4).getName(), is(KafkaCluster.CLIENT_CA_CERTS_VOLUME));
                     assertThat(pod.getSpec().getVolumes().get(4).getSecret().getSecretName(), is("foo-clients-ca-cert"));
                     assertThat(pod.getSpec().getVolumes().get(5).getName(), is("kafka-metrics-and-logging"));
@@ -4356,7 +4429,7 @@ public class KafkaClusterTest {
                     assertThat(pod.getSpec().getVolumes().get(2).getName(), is(KafkaCluster.CLUSTER_CA_CERTS_VOLUME));
                     assertThat(pod.getSpec().getVolumes().get(2).getSecret().getSecretName(), is("foo-cluster-ca-cert"));
                     assertThat(pod.getSpec().getVolumes().get(3).getName(), is(KafkaCluster.BROKER_CERTS_VOLUME));
-                    assertThat(pod.getSpec().getVolumes().get(3).getSecret().getSecretName(), is("foo-kafka-brokers"));
+                    assertThat(pod.getSpec().getVolumes().get(3).getSecret().getSecretName(), is(pod.getMetadata().getName()));
                     assertThat(pod.getSpec().getVolumes().get(4).getName(), is(KafkaCluster.CLIENT_CA_CERTS_VOLUME));
                     assertThat(pod.getSpec().getVolumes().get(4).getSecret().getSecretName(), is("foo-clients-ca-cert"));
                     assertThat(pod.getSpec().getVolumes().get(5).getName(), is("kafka-metrics-and-logging"));
@@ -4420,7 +4493,7 @@ public class KafkaClusterTest {
                     assertThat(pod.getSpec().getVolumes().get(2).getName(), is(KafkaCluster.CLUSTER_CA_CERTS_VOLUME));
                     assertThat(pod.getSpec().getVolumes().get(2).getSecret().getSecretName(), is("foo-cluster-ca-cert"));
                     assertThat(pod.getSpec().getVolumes().get(3).getName(), is(KafkaCluster.BROKER_CERTS_VOLUME));
-                    assertThat(pod.getSpec().getVolumes().get(3).getSecret().getSecretName(), is("foo-kafka-brokers"));
+                    assertThat(pod.getSpec().getVolumes().get(3).getSecret().getSecretName(), is(pod.getMetadata().getName()));
                     assertThat(pod.getSpec().getVolumes().get(4).getName(), is(KafkaCluster.CLIENT_CA_CERTS_VOLUME));
                     assertThat(pod.getSpec().getVolumes().get(4).getSecret().getSecretName(), is("foo-clients-ca-cert"));
                     assertThat(pod.getSpec().getVolumes().get(5).getName(), is("kafka-metrics-and-logging"));

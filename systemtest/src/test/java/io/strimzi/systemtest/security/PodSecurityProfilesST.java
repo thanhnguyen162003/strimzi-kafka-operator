@@ -22,7 +22,6 @@ import io.strimzi.systemtest.enums.PodSecurityProfile;
 import io.strimzi.systemtest.kafkaclients.internalClients.KafkaClients;
 import io.strimzi.systemtest.kafkaclients.internalClients.KafkaClientsBuilder;
 import io.strimzi.systemtest.resources.NamespaceManager;
-import io.strimzi.systemtest.resources.NodePoolsConverter;
 import io.strimzi.systemtest.resources.ResourceManager;
 import io.strimzi.systemtest.resources.crd.KafkaNodePoolResource;
 import io.strimzi.systemtest.storage.TestStorage;
@@ -55,7 +54,7 @@ import static org.hamcrest.MatcherAssert.assertThat;
  * only some Volume types etc.).
  *
  * Test cases are design to verify common behaviour of Pod Security profiles. Specifically, (i.) we check if containers such
- * as Kafka, ZooKeeper, Entity Operator, KafkaBridge has properly set .securityContext (ii.) then we check if these
+ * as Kafka, Entity Operator, KafkaBridge has properly set .securityContext (ii.) then we check if these
  * resources working and are stable with exchanging messages.
  */
 @Tag(REGRESSION)
@@ -75,7 +74,7 @@ public class PodSecurityProfilesST extends AbstractST {
      *     - All components are deployed targeting respective Kafka Clusters
      *  4. - Deploy producer which will produce data into Topic residing in Kafka Cluster serving as Source for KafkaMirrorMakers and is targeted by other Operands
      *     - Messages are sent into KafkaTopic
-     *  5. - Verify that containers such as Kafka, ZooKeeper, Entity Operator, KafkaBridge has properly set .securityContext
+     *  5. - Verify that containers such as Kafka, Entity Operator, KafkaBridge has properly set .securityContext
      *     - All containers and Pods have expected properties
      *  6. - Verify KafkaConnect and KafkaConnector are working by checking presence of Data in file targeted by FileSink KafkaConnector
      *     - Data are present here
@@ -105,21 +104,19 @@ public class PodSecurityProfilesST extends AbstractST {
 
         LOGGER.info("Deploy Kafka Clusters resources");
         resourceManager.createResourceWithWait(
-            NodePoolsConverter.convertNodePoolsIfNeeded(
-                KafkaNodePoolTemplates.brokerPoolPersistentStorage(testStorage.getNamespaceName(), testStorage.getBrokerPoolName(), testStorage.getClusterName(), 1).build(),
-                KafkaNodePoolTemplates.controllerPoolPersistentStorage(testStorage.getNamespaceName(), testStorage.getControllerPoolName(), testStorage.getClusterName(), 1).build(),
+            KafkaNodePoolTemplates.brokerPoolPersistentStorage(testStorage.getNamespaceName(), testStorage.getBrokerPoolName(), testStorage.getClusterName(), 1).build(),
+            KafkaNodePoolTemplates.controllerPoolPersistentStorage(testStorage.getNamespaceName(), testStorage.getControllerPoolName(), testStorage.getClusterName(), 1).build(),
 
-                KafkaNodePoolTemplates.brokerPoolPersistentStorage(testStorage.getNamespaceName(), KafkaNodePoolResource.getBrokerPoolName(mm1TargetClusterName), mm1TargetClusterName, 1).build(),
-                KafkaNodePoolTemplates.controllerPoolPersistentStorage(testStorage.getNamespaceName(), KafkaNodePoolResource.getControllerPoolName(mm1TargetClusterName), mm1TargetClusterName, 1).build(),
+            KafkaNodePoolTemplates.brokerPoolPersistentStorage(testStorage.getNamespaceName(), KafkaNodePoolResource.getBrokerPoolName(mm1TargetClusterName), mm1TargetClusterName, 1).build(),
+            KafkaNodePoolTemplates.controllerPoolPersistentStorage(testStorage.getNamespaceName(), KafkaNodePoolResource.getControllerPoolName(mm1TargetClusterName), mm1TargetClusterName, 1).build(),
 
-                KafkaNodePoolTemplates.brokerPoolPersistentStorage(testStorage.getNamespaceName(), KafkaNodePoolResource.getBrokerPoolName(mm2TargetClusterName), mm2TargetClusterName, 1).build(),
-                KafkaNodePoolTemplates.controllerPoolPersistentStorage(testStorage.getNamespaceName(), KafkaNodePoolResource.getControllerPoolName(mm2TargetClusterName), mm2TargetClusterName, 1).build()
-            )
+            KafkaNodePoolTemplates.brokerPoolPersistentStorage(testStorage.getNamespaceName(), KafkaNodePoolResource.getBrokerPoolName(mm2TargetClusterName), mm2TargetClusterName, 1).build(),
+            KafkaNodePoolTemplates.controllerPoolPersistentStorage(testStorage.getNamespaceName(), KafkaNodePoolResource.getControllerPoolName(mm2TargetClusterName), mm2TargetClusterName, 1).build()
         );
         resourceManager.createResourceWithWait(
-            KafkaTemplates.kafkaPersistent(testStorage.getNamespaceName(), testStorage.getClusterName(), 1).build(),
-            KafkaTemplates.kafkaPersistent(testStorage.getNamespaceName(), mm1TargetClusterName, 1).build(),
-            KafkaTemplates.kafkaPersistent(testStorage.getNamespaceName(), mm2TargetClusterName, 1).build(),
+            KafkaTemplates.kafka(testStorage.getNamespaceName(), testStorage.getClusterName(), 1).build(),
+            KafkaTemplates.kafka(testStorage.getNamespaceName(), mm1TargetClusterName, 1).build(),
+            KafkaTemplates.kafka(testStorage.getNamespaceName(), mm2TargetClusterName, 1).build(),
             KafkaTopicTemplates.topic(testStorage).build()
         );
 
@@ -208,7 +205,7 @@ public class PodSecurityProfilesST extends AbstractST {
 
     @BeforeAll
     void beforeAll() {
-        // we configure Pod Security via provider class, which sets SecurityContext to all containers (e.g., Kafka, ZooKeeper,
+        // we configure Pod Security via provider class, which sets SecurityContext to all containers (e.g., Kafka,
         // Entity Operator, Bridge). Another alternative but more complicated is to set it via .template section inside each CR.
         clusterOperator = clusterOperator
             .defaultInstallation()

@@ -23,6 +23,7 @@ import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
 import java.security.InvalidParameterException;
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
@@ -42,6 +43,7 @@ public class KafkaClients extends BaseClients {
     private String caCertSecretName;
     private String headers;
     private PodSecurityProfile podSecurityPolicy;
+    private String messagesPerTransaction;
 
     public String getProducerName() {
         return producerName;
@@ -138,6 +140,14 @@ public class KafkaClients extends BaseClients {
         this.podSecurityPolicy = podSecurityPolicy;
     }
 
+    public void setMessagesPerTransaction(String messagesPerTransaction) {
+        this.messagesPerTransaction = messagesPerTransaction;
+    }
+
+    public String getMessagesPerTransaction() {
+        return messagesPerTransaction;
+    }
+
     public Job producerStrimzi() {
         return defaultProducerStrimzi().build();
     }
@@ -164,6 +174,14 @@ public class KafkaClients extends BaseClients {
     }
 
     public Job producerTlsStrimzi(final String clusterName) {
+        List<EnvVar> tlsEnvVars = new ArrayList<>();
+        tlsEnvVars.add(this.getClusterCaCertEnv(clusterName));
+        tlsEnvVars.addAll(this.getTlsEnvVars());
+
+        return producerTlsStrimziWithTlsEnvVars(tlsEnvVars);
+    }
+
+    public Job producerTlsStrimziWithTlsEnvVars(List<EnvVar> tlsEnvVars) {
         this.configureTls();
 
         return defaultProducerStrimzi()
@@ -171,8 +189,7 @@ public class KafkaClients extends BaseClients {
                 .editTemplate()
                     .editSpec()
                         .editFirstContainer()
-                            .addToEnv(this.getClusterCaCertEnv(clusterName))
-                            .addAllToEnv(this.getTlsEnvVars())
+                            .addAllToEnv(tlsEnvVars)
                         .endContainer()
                     .endSpec()
                 .endTemplate()
@@ -278,6 +295,22 @@ public class KafkaClients extends BaseClients {
                 .endSpec();
         }
 
+        if (this.getMessagesPerTransaction() != null) {
+            builder
+                .editSpec()
+                    .editTemplate()
+                        .editSpec()
+                            .editFirstContainer()
+                                .addNewEnv()
+                                    .withName("MESSAGES_PER_TRANSACTION")
+                                    .withValue(this.getMessagesPerTransaction())
+                                .endEnv()
+                            .endContainer()
+                        .endSpec()
+                    .endTemplate()
+                .endSpec();
+        }
+
         if (PodSecurityProfile.RESTRICTED == this.podSecurityPolicy) {
             this.enableRestrictedProfile(builder);
         }
@@ -307,6 +340,14 @@ public class KafkaClients extends BaseClients {
     }
 
     public Job consumerTlsStrimzi(final String clusterName) {
+        List<EnvVar> tlsEnvVars = new ArrayList<>();
+        tlsEnvVars.add(this.getClusterCaCertEnv(clusterName));
+        tlsEnvVars.addAll(this.getTlsEnvVars());
+
+        return consumerTlsStrimziWithTlsEnvVars(tlsEnvVars);
+    }
+
+    public Job consumerTlsStrimziWithTlsEnvVars(final List<EnvVar> tlsEnvVars) {
         this.configureTls();
 
         return defaultConsumerStrimzi()
@@ -314,8 +355,7 @@ public class KafkaClients extends BaseClients {
                 .editTemplate()
                     .editSpec()
                         .editFirstContainer()
-                            .addToEnv(this.getClusterCaCertEnv(clusterName))
-                            .addAllToEnv(this.getTlsEnvVars())
+                            .addAllToEnv(tlsEnvVars)
                         .endContainer()
                     .endSpec()
                 .endTemplate()

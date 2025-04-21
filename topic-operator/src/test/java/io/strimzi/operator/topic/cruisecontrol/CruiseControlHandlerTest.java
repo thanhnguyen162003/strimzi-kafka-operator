@@ -15,8 +15,8 @@ import io.strimzi.certs.Subject;
 import io.strimzi.operator.common.Reconciliation;
 import io.strimzi.operator.common.model.StatusUtils;
 import io.strimzi.operator.common.operator.MockCertManager;
+import io.strimzi.operator.topic.TestUtil;
 import io.strimzi.operator.topic.TopicOperatorConfig;
-import io.strimzi.operator.topic.TopicOperatorTestUtil;
 import io.strimzi.operator.topic.TopicOperatorUtil;
 import io.strimzi.operator.topic.metrics.TopicOperatorMetricsHolder;
 import io.strimzi.operator.topic.metrics.TopicOperatorMetricsProvider;
@@ -44,10 +44,9 @@ import static org.hamcrest.CoreMatchers.notNullValue;
 import static org.hamcrest.CoreMatchers.nullValue;
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.number.OrderingComparison.greaterThan;
-import static org.junit.jupiter.api.Assertions.assertThrows;
 
 public class CruiseControlHandlerTest {
-    private static final String NAMESPACE = TopicOperatorTestUtil.namespaceName(CruiseControlHandlerTest.class);
+    private static final String NAMESPACE = TestUtil.namespaceName(CruiseControlHandlerTest.class);
 
     private static TopicOperatorMetricsHolder metricsHolder;
     private static int serverPort;
@@ -92,8 +91,8 @@ public class CruiseControlHandlerTest {
     }
 
     @ParameterizedTest
-    @MethodSource("validConfigs")
-    public void shouldSucceedWithValidConfig(TopicOperatorConfig config) {
+    @MethodSource("operatorConfigs")
+    public void replicasChangeShouldShouldCompleteWithValidConfig(TopicOperatorConfig config) {
         var handler = new CruiseControlHandler(config, metricsHolder, TopicOperatorUtil.createCruiseControlClient(config));
 
         server.expectTopicConfigSuccessResponse(apiUserFile, apiPassFile);
@@ -105,56 +104,6 @@ public class CruiseControlHandlerTest {
         var ongoing = buildOngoingReconcilableTopics();
         var completedAndFailed = handler.requestOngoingChanges(ongoing);
         assertCompleted(ongoing, completedAndFailed);
-    }
-    
-    @Test
-    public void shouldFailWithSslEnabledAndMissingCrtFile() {
-        var config = TopicOperatorConfig.buildFromMap(Map.ofEntries(
-            entry(TopicOperatorConfig.BOOTSTRAP_SERVERS.key(), "localhost:9092"),
-            entry(TopicOperatorConfig.NAMESPACE.key(), NAMESPACE),
-            entry(TopicOperatorConfig.CRUISE_CONTROL_HOSTNAME.key(), "localhost"),
-            entry(TopicOperatorConfig.CRUISE_CONTROL_PORT.key(), String.valueOf(serverPort)),
-            entry(TopicOperatorConfig.CRUISE_CONTROL_SSL_ENABLED.key(), "true"),
-            entry(TopicOperatorConfig.CRUISE_CONTROL_CRT_FILE_PATH.key(), "/invalid/ca.crt")
-        ));
-
-        RuntimeException thrown = assertThrows(RuntimeException.class, () -> 
-            new CruiseControlHandler(config, metricsHolder, TopicOperatorUtil.createCruiseControlClient(config)));
-        assertThat(thrown.getMessage(), is("File not found: /invalid/ca.crt"));
-    }
-
-    @Test
-    public void shouldFailWithAuthEnabledAndUsernameFileNotFound() {
-        var config = TopicOperatorConfig.buildFromMap(Map.ofEntries(
-            entry(TopicOperatorConfig.BOOTSTRAP_SERVERS.key(), "localhost:9092"),
-            entry(TopicOperatorConfig.NAMESPACE.key(), NAMESPACE),
-            entry(TopicOperatorConfig.CRUISE_CONTROL_HOSTNAME.key(), "localhost"),
-            entry(TopicOperatorConfig.CRUISE_CONTROL_PORT.key(), String.valueOf(serverPort)),
-            entry(TopicOperatorConfig.CRUISE_CONTROL_AUTH_ENABLED.key(), "true"),
-            entry(TopicOperatorConfig.CRUISE_CONTROL_API_USER_PATH.key(), "/invalid/username"),
-            entry(TopicOperatorConfig.CRUISE_CONTROL_API_PASS_PATH.key(), apiPassFile.getAbsolutePath())
-        ));
-
-        RuntimeException thrown = assertThrows(RuntimeException.class, () -> 
-            new CruiseControlHandler(config, metricsHolder, TopicOperatorUtil.createCruiseControlClient(config)));
-        assertThat(thrown.getMessage(), is("File not found: /invalid/username"));
-    }
-
-    @Test
-    public void shouldFailWithAuthEnabledAndPasswordFileNotFound() {
-        var config = TopicOperatorConfig.buildFromMap(Map.ofEntries(
-            entry(TopicOperatorConfig.BOOTSTRAP_SERVERS.key(), "localhost:9092"),
-            entry(TopicOperatorConfig.NAMESPACE.key(), NAMESPACE),
-            entry(TopicOperatorConfig.CRUISE_CONTROL_HOSTNAME.key(), "localhost"),
-            entry(TopicOperatorConfig.CRUISE_CONTROL_PORT.key(), String.valueOf(serverPort)),
-            entry(TopicOperatorConfig.CRUISE_CONTROL_AUTH_ENABLED.key(), "true"),
-            entry(TopicOperatorConfig.CRUISE_CONTROL_API_USER_PATH.key(), apiUserFile.getAbsolutePath()),
-            entry(TopicOperatorConfig.CRUISE_CONTROL_API_PASS_PATH.key(), "/invalid/password")
-        ));
-
-        RuntimeException thrown = assertThrows(RuntimeException.class, () -> 
-            new CruiseControlHandler(config, metricsHolder, TopicOperatorUtil.createCruiseControlClient(config)));
-        assertThat(thrown.getMessage(), is("File not found: /invalid/password"));
     }
 
     @Test
@@ -344,7 +293,8 @@ public class CruiseControlHandlerTest {
             kafkaTopic, topicName));
     }
 
-    private static List<TopicOperatorConfig> validConfigs() {
+    // this is used as method source in parameterized tests
+    private static List<TopicOperatorConfig> operatorConfigs() {
         return Arrays.asList(
             // encryption and authentication disabled
             TopicOperatorConfig.buildFromMap(Map.ofEntries(

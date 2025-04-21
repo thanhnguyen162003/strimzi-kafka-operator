@@ -15,8 +15,7 @@ The simple authorization uses the Kafka Admin API to manage the ACL rules inside
 Whether ACL management in the User Operator is enabled or not depends on your authorization configuration in the Kafka cluster.
 
 * For simple authorization, ACL management is always enabled.
-* For OPA authorization, ACL management is always disabled.
-  Authorization rules are configured in the OPA server.
+* For OPA authorization (deprecated), ACL management is always disabled.
 * For Keycloak authorization, you can manage the ACL rules directly in Keycloak.
   You can also delegate authorization to the simple authorizer as a fallback option in the configuration.
   When delegation to the simple authorizer is enabled, the User Operator will enable management of ACL rules as well.
@@ -33,18 +32,3 @@ You can disable it using the `STRIMZI_ACLS_ADMIN_API_SUPPORTED` environment vari
 If no authorization is specified, the User Operator does not provision any access rights for the user.
 Whether such a `KafkaUser` can still access resources depends on the authorizer being used.
 For example, for `simple` authorization, this is determined by the `allow.everyone.if.no.acl.found` configuration in the Kafka cluster.
-
-== ACL rules
-
-`simple` authorization uses ACL rules to manage access to Kafka brokers.
-
-ACL rules grant access rights to the user, which you specify in the `acls` property.
-
-For more information about the `AclRule` object, see the link:{BookURLConfiguring}#type-AclRule-reference[`AclRule` schema reference^].
-
-== Super user access to Kafka brokers
-
-If a user is added to a list of super users in a Kafka broker configuration,
-the user is allowed unlimited access to the cluster regardless of any authorization constraints defined in ACLs in `KafkaUser`.
-
-For more information on configuring super user access to brokers, see xref:con-securing-kafka-authorization-{context}[Kafka authorization].

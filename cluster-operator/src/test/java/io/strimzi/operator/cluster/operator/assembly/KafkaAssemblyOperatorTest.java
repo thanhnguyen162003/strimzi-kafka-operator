@@ -70,7 +70,6 @@ import io.strimzi.operator.cluster.operator.resource.kubernetes.CrdOperator;
 import io.strimzi.operator.cluster.operator.resource.kubernetes.DeploymentOperator;
 import io.strimzi.operator.cluster.operator.resource.kubernetes.IngressOperator;
 import io.strimzi.operator.cluster.operator.resource.kubernetes.NetworkPolicyOperator;
-import io.strimzi.operator.cluster.operator.resource.kubernetes.NodeOperator;
 import io.strimzi.operator.cluster.operator.resource.kubernetes.PodDisruptionBudgetOperator;
 import io.strimzi.operator.cluster.operator.resource.kubernetes.PodOperator;
 import io.strimzi.operator.cluster.operator.resource.kubernetes.PvcOperator;
@@ -527,8 +526,10 @@ public class KafkaAssemblyOperatorTest {
                 KafkaResources.clientsCaCertificateSecretName(CLUSTER_NAME),
                 KafkaResources.clusterCaCertificateSecretName(CLUSTER_NAME),
                 KafkaResources.clusterCaKeySecretName(CLUSTER_NAME),
-                KafkaResources.kafkaSecretName(CLUSTER_NAME),
                 KafkaResources.clusterOperatorCertsSecretName(CLUSTER_NAME));
+
+        // Kafka node certificate Secrets
+        kafkaCluster.nodes().forEach(node -> expectedSecrets.add(node.podName()));
 
         if (metrics)    {
             expectedSecrets.add(KafkaExporterResources.secretName(CLUSTER_NAME));
@@ -600,10 +601,6 @@ public class KafkaAssemblyOperatorTest {
         IngressOperator mockIngressOps = supplier.ingressOperations;
         when(mockIngressOps.batchReconcile(any(), eq(NAMESPACE), any(), any())).thenCallRealMethod();
         when(mockIngressOps.listAsync(eq(NAMESPACE), any(Labels.class))).thenReturn(Future.succeededFuture(emptyList()));
-
-        // Nodes
-        NodeOperator mockNodeOps = supplier.nodeOperator;
-        when(mockNodeOps.listAsync(any(Labels.class))).thenReturn(Future.succeededFuture(emptyList()));
 
         KafkaAssemblyOperator ops = new KafkaAssemblyOperator(vertx, new PlatformFeaturesAvailability(openShift, kubernetesVersion),
                 CERT_MANAGER,
@@ -974,10 +971,6 @@ public class KafkaAssemblyOperatorTest {
         // PDBs
         PodDisruptionBudgetOperator mockPdbOps = supplier.podDisruptionBudgetOperator;
         when(mockPdbOps.reconcile(any(), eq(NAMESPACE), any(), any())).thenReturn(Future.succeededFuture());
-
-        // Nodes
-        NodeOperator mockNodeOps = supplier.nodeOperator;
-        when(mockNodeOps.listAsync(any(Labels.class))).thenReturn(Future.succeededFuture(emptyList()));
 
         // Ingress resources
         IngressOperator mockIngressOps = supplier.ingressOperations;

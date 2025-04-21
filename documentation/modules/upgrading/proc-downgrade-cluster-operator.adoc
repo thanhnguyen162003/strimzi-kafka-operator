@@ -5,20 +5,19 @@
 [id='proc-downgrade-cluster-operator-{context}']
 = Downgrading the Cluster Operator to a previous version
 
-If you are encountering issues with Strimzi,
-you can revert your installation.
-
+[role="_abstract"]
 This procedure describes how to downgrade a Cluster Operator deployment to a previous version.
+
+NOTE: Kafka clusters managed by Strimzi always use node pools. 
+Downgrading to a cluster without node pools is not possible.
 
 .Prerequisites
 
 * An existing Cluster Operator deployment is available.
 * You have xref:downloads-{context}[downloaded the installation files for the previous version].
 
-.Before you begin
-
-Check the downgrade requirements of the xref:ref-operator-cluster-feature-gates-{context}[Strimzi feature gates].
-If a feature gate is permanently enabled, you may need to downgrade to a version that allows you to disable it before downgrading to your target version. 
+Currently, no feature gates require enabling or disabling before downgrading. 
+If a feature gate introduces such a requirement, the details will be provided here.
 
 .Procedure
 
@@ -45,6 +44,18 @@ kubectl replace -f install/cluster-operator
 ----
 +
 Wait for the rolling updates to complete.
+
+. If the target operator version does not support the current Kafka version, an error message is returned.
++
+To resolve this, downgrade to a supported Kafka version if possible:
++
+--
+.. Edit the `Kafka` custom resource.
+.. Change the `spec.kafka.version` property to a supported Kafka version.
+--
++
+If no error message is returned, you can proceed to the next step and upgrade the Kafka version later.
+
 
 . Get the image for the Kafka pod to ensure the downgrade was successful:
 +

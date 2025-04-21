@@ -4,7 +4,11 @@
  */
 package io.strimzi.systemtest.metrics;
 
-import io.fabric8.kubernetes.api.model.Secret;
+import io.skodjob.annotations.Desc;
+import io.skodjob.annotations.Label;
+import io.skodjob.annotations.Step;
+import io.skodjob.annotations.SuiteDoc;
+import io.skodjob.annotations.TestDoc;
 import io.strimzi.api.kafka.model.common.jmx.KafkaJmxAuthenticationPassword;
 import io.strimzi.api.kafka.model.connect.KafkaConnect;
 import io.strimzi.api.kafka.model.connect.KafkaConnectResources;
@@ -15,7 +19,7 @@ import io.strimzi.systemtest.Environment;
 import io.strimzi.systemtest.TestConstants;
 import io.strimzi.systemtest.annotations.FIPSNotSupported;
 import io.strimzi.systemtest.annotations.ParallelNamespaceTest;
-import io.strimzi.systemtest.resources.NodePoolsConverter;
+import io.strimzi.systemtest.docs.TestDocsLabels;
 import io.strimzi.systemtest.resources.ResourceManager;
 import io.strimzi.systemtest.resources.kubernetes.NetworkPolicyResource;
 import io.strimzi.systemtest.resources.operator.SetupClusterOperator;
@@ -30,7 +34,6 @@ import org.apache.logging.log4j.Logger;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Tag;
 
-import java.util.Arrays;
 import java.util.Collections;
 import java.util.Map;
 
@@ -41,9 +44,18 @@ import static io.strimzi.systemtest.TestTags.REGRESSION;
 import static io.strimzi.test.k8s.KubeClusterResource.kubeClient;
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.containsString;
-import static org.junit.jupiter.api.Assertions.assertTrue;
 
 @Tag(REGRESSION)
+@SuiteDoc(
+    description = @Desc("This suite verifies JMX metrics behavior under various configurations and scenarios."),
+    beforeTestSteps = {
+        @Step(value = "Install the Cluster Operator and ensure environment readiness.", expected = "Cluster Operator is deployed and environment is ready.")
+    },
+    labels = {
+        @Label(value = TestDocsLabels.KAFKA),
+        @Label(value = TestDocsLabels.METRICS)
+    }
+)
 public class JmxST extends AbstractST {
 
     private static final Logger LOGGER = LogManager.getLogger(JmxST.class);
@@ -52,10 +64,20 @@ public class JmxST extends AbstractST {
     @Tag(CONNECT)
     @Tag(CONNECT_COMPONENTS)
     @FIPSNotSupported("JMX with auth is not working with FIPS")
-    @SuppressWarnings("deprecation") // ZooKeeper is deprecated, but some APi methods are still called here
-    void testKafkaZookeeperAndKafkaConnectWithJMX() {
+    @TestDoc(
+        description = @Desc("Test verifying Kafka and KafkaConnect with JMX authentication enabled and correct version reporting."),
+        steps = {
+            @Step(value = "Deploy a Kafka cluster (ephemeral storage) with JMX authentication.", expected = "Kafka cluster is deployed with JMX enabled and authentication set."),
+            @Step(value = "Deploy a KafkaConnect cluster with JMX authentication.", expected = "KafkaConnect is deployed with JMX enabled and authentication set."),
+            @Step(value = "Create a Scraper Pod, install jmxterm, and collect JMX metrics from both Kafka and KafkaConnect.", expected = "JMX metrics are retrieved; Kafka version is reported correctly.")
+        },
+        labels = {
+            @Label(value = TestDocsLabels.KAFKA),
+            @Label(value = TestDocsLabels.METRICS)
+        }
+    )
+    void testKafkaAndKafkaConnectWithJMX() {
         final TestStorage testStorage = new TestStorage(ResourceManager.getTestContext());
-        final String zkSecretName = testStorage.getClusterName() + "-zookeeper-jmx";
         final String connectJmxSecretName = testStorage.getClusterName() + "-kafka-connect-jmx";
         final String kafkaJmxSecretName = testStorage.getClusterName() + "-kafka-jmx";
 
@@ -63,19 +85,12 @@ public class JmxST extends AbstractST {
         Map<String, String> jmxSecretAnnotations = Collections.singletonMap("my-annotation", "some-value");
 
         resourceManager.createResourceWithWait(
-            NodePoolsConverter.convertNodePoolsIfNeeded(
-                KafkaNodePoolTemplates.brokerPool(testStorage.getNamespaceName(), testStorage.getBrokerPoolName(), testStorage.getClusterName(), 3).build(),
-                KafkaNodePoolTemplates.controllerPool(testStorage.getNamespaceName(), testStorage.getControllerPoolName(), testStorage.getClusterName(), 3).build()
-            )
+            KafkaNodePoolTemplates.brokerPool(testStorage.getNamespaceName(), testStorage.getBrokerPoolName(), testStorage.getClusterName(), 3).build(),
+            KafkaNodePoolTemplates.controllerPool(testStorage.getNamespaceName(), testStorage.getControllerPoolName(), testStorage.getClusterName(), 3).build()
         );
-        Kafka kafka = KafkaTemplates.kafkaEphemeral(testStorage.getNamespaceName(), testStorage.getClusterName(), 3)
+        Kafka kafka = KafkaTemplates.kafka(testStorage.getNamespaceName(), testStorage.getClusterName(), 3)
             .editOrNewSpec()
                 .editKafka()
-                    .withNewJmxOptions()
-                        .withAuthentication(new KafkaJmxAuthenticationPassword())
-                    .endJmxOptions()
-                .endKafka()
-                .editOrNewZookeeper()
                     .withNewJmxOptions()
                         .withAuthentication(new KafkaJmxAuthenticationPassword())
                     .endJmxOptions()
@@ -87,13 +102,9 @@ public class JmxST extends AbstractST {
                             .endMetadata()
                         .endJmxSecret()
                     .endTemplate()
-                .endZookeeper()
+                .endKafka()
             .endSpec()
             .build();
-
-        if (Environment.isKRaftModeEnabled()) {
-            kafka.getSpec().setZookeeper(null);
-        }
 
         resourceManager.createResourceWithWait(kafka, ScraperTemplates.scraperPod(testStorage.getNamespaceName(), testStorage.getScraperName()).build());
         String scraperPodName = kubeClient().listPodsByPrefixInName(testStorage.getNamespaceName(), testStorage.getScraperName()).get(0).getMetadata().getName();
@@ -116,20 +127,6 @@ public class JmxST extends AbstractST {
         String kafkaConnectResults = JmxUtils.collectJmxMetricsWithWait(testStorage.getNamespaceName(), KafkaConnectResources.serviceName(testStorage.getClusterName()), connectJmxSecretName, scraperPodName, "bean kafka.connect:type=app-info\nget -i *");
         assertThat("Result from Kafka JMX doesn't contain right version of Kafka, result: " + kafkaResults, kafkaResults, containsString("version = " + Environment.ST_KAFKA_VERSION));
         assertThat("Result from KafkaConnect JMX doesn't contain right version of Kafka, result: " + kafkaConnectResults, kafkaConnectResults, containsString("version = " + Environment.ST_KAFKA_VERSION));
-
-        if (!Environment.isKRaftModeEnabled()) {
-            Secret jmxZkSecret = kubeClient().getSecret(testStorage.getNamespaceName(), zkSecretName);
-
-            String zkBeans = JmxUtils.collectJmxMetricsWithWait(testStorage.getNamespaceName(), KafkaResources.zookeeperHeadlessServiceName(testStorage.getClusterName()), zkSecretName, scraperPodName, "domain org.apache.ZooKeeperService\nbeans");
-            String zkBean = Arrays.stream(zkBeans.split("\\n")).filter(bean -> bean.matches("org.apache.ZooKeeperService:name[0-9]+=ReplicatedServer_id[0-9]+")).findFirst().orElseThrow();
-
-            String zkResults = JmxUtils.collectJmxMetricsWithWait(testStorage.getNamespaceName(), KafkaResources.zookeeperHeadlessServiceName(testStorage.getClusterName()), zkSecretName, scraperPodName, "bean " + zkBean + "\nget -i *");
-            assertThat("Result from ZooKeeper JMX doesn't contain right quorum size, result: " + zkResults, zkResults, containsString("QuorumSize = 3"));
-
-            LOGGER.info("Checking that ZooKeeper JMX Secret is created with custom labels and annotations");
-            assertTrue(jmxZkSecret.getMetadata().getLabels().entrySet().containsAll(jmxSecretLabels.entrySet()));
-            assertTrue(jmxZkSecret.getMetadata().getAnnotations().entrySet().containsAll(jmxSecretAnnotations.entrySet()));
-        }
     }
 
     @BeforeAll

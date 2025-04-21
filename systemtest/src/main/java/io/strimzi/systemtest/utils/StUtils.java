@@ -12,7 +12,6 @@ import com.fasterxml.jackson.dataformat.yaml.YAMLMapper;
 import com.jayway.jsonpath.JsonPath;
 import io.fabric8.kubernetes.api.model.Affinity;
 import io.fabric8.kubernetes.api.model.ConfigMap;
-import io.fabric8.kubernetes.api.model.Container;
 import io.fabric8.kubernetes.api.model.LabelSelector;
 import io.fabric8.kubernetes.api.model.Pod;
 import io.fabric8.kubernetes.api.model.Secret;
@@ -48,7 +47,6 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
-import java.util.Optional;
 import java.util.Properties;
 import java.util.StringTokenizer;
 import java.util.function.BiFunction;
@@ -66,7 +64,13 @@ public class StUtils {
 
     private static final Pattern KAFKA_COMPONENT_PATTERN = Pattern.compile("([^-|^_]*?)(?<kafka>[-|_]kafka[-|_])(?<version>.*)$");
 
-    private static final Pattern IMAGE_PATTERN_FULL_PATH = Pattern.compile("^(?<registry>[^/]*)/(?<org>[^/]*)/(?<image>[^:]*):(?<tag>.*)$");
+    public static final Pattern IMAGE_PATTERN_FULL_PATH = Pattern.compile(
+        "^(?:(?<registry>[a-zA-Z0-9.-]+(?::\\d+)?)/)?" +              // Group for registry (and port)
+        "(?<org>[a-z0-9][a-z0-9._-]*(?:/[a-z0-9._-]+)*)/" +           // Full repository path (org)
+        "(?<image>[a-zA-Z0-9._-]+)" +                                 // Name of the image
+        "(?::(?<tag>[a-zA-Z0-9._-]+))?$"                              // Tag of the image
+    );
+
     private static final Pattern IMAGE_PATTERN = Pattern.compile("^(?<org>[^/]*)/(?<image>[^:]*):(?<tag>.*)$");
 
     private static final Pattern VERSION_IMAGE_PATTERN = Pattern.compile("(?<version>[0-9.]+)=(?<image>[^\\s]*)");
@@ -265,13 +269,10 @@ public class StUtils {
      * @param containerName name of container from which to take the log
      */
     public static void checkLogForJSONFormat(String namespaceName, Map<String, String> pods, String containerName) {
-        //this is only for decrease the number of records - kafka have record/line, operators record/11lines
-        String tail = "--tail=" + (containerName.contains("operator") ? "100" : "10");
-
         TestUtils.waitFor("JSON log to be present in " + pods, TestConstants.GLOBAL_POLL_INTERVAL_MEDIUM, TestConstants.GLOBAL_TIMEOUT, () -> {
             boolean isJSON = false;
             for (String podName : pods.keySet()) {
-                String log = cmdKubeClient().namespace(namespaceName).execInCurrentNamespace(Level.TRACE, "logs", podName, "-c", containerName, tail).out();
+                String log = cmdKubeClient().namespace(namespaceName).execInCurrentNamespace(Level.TRACE, "logs", podName, "-c", containerName, "--tail=100").out();
 
                 JsonArray jsonArray = getJsonArrayFromLog(log);
 
@@ -561,27 +562,6 @@ public class StUtils {
     public static void waitUntilSupplierIsSatisfied(String message, final BooleanSupplier sup) {
         TestUtils.waitFor(message, TestConstants.GLOBAL_POLL_INTERVAL,
                 TestConstants.GLOBAL_STATUS_TIMEOUT, sup);
-    }
-
-    /**
-     * Checks env variables of Topic operator container (inside EO Pod) and based on that determines, if BTO or UTO is used.
-     *
-     * @param namespaceName name of the Namespace, where the EO Pod is running
-     * @param eoLabelSelector LabelSelector of EO
-     * @return boolean determining if UTO is used or not
-     */
-    public static boolean isUnidirectionalTopicOperatorUsed(String namespaceName, LabelSelector eoLabelSelector) {
-        Optional<Container> topicOperatorContainer = kubeClient().listPods(namespaceName, eoLabelSelector).get(0).getSpec().getContainers()
-            .stream().filter(container -> container.getName().equals("topic-operator")).findFirst();
-
-        if (topicOperatorContainer.isPresent()) {
-            return topicOperatorContainer.get().getEnv()
-                // ZK related env vars are only present in BTO mode -> because of that we can determine which of the TOs is used
-                .stream().noneMatch(envVar -> envVar.getName().contains("ZOOKEEPER"));
-        }
-
-        LOGGER.warn("Cannot determine if UTO is used or not, because the EO Pod doesn't exist, gonna assume that it's not");
-        return false;
     }
 
     /**

@@ -28,7 +28,6 @@ import io.strimzi.operator.cluster.KafkaVersionTestUtils;
 import io.strimzi.operator.cluster.PlatformFeaturesAvailability;
 import io.strimzi.operator.cluster.ResourceUtils;
 import io.strimzi.operator.cluster.model.CertUtils;
-import io.strimzi.operator.cluster.model.KafkaCluster;
 import io.strimzi.operator.cluster.model.KafkaVersion;
 import io.strimzi.operator.cluster.model.PodSetUtils;
 import io.strimzi.operator.cluster.operator.resource.ResourceOperatorSupplier;
@@ -45,6 +44,11 @@ import io.vertx.core.WorkerExecutor;
 import io.vertx.junit5.Checkpoint;
 import io.vertx.junit5.VertxExtension;
 import io.vertx.junit5.VertxTestContext;
+import org.apache.kafka.clients.admin.Admin;
+import org.apache.kafka.clients.admin.DescribeFeaturesResult;
+import org.apache.kafka.clients.admin.FeatureMetadata;
+import org.apache.kafka.clients.admin.FinalizedVersionRange;
+import org.apache.kafka.common.KafkaFuture;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
@@ -68,6 +72,8 @@ import static org.hamcrest.CoreMatchers.nullValue;
 import static org.hamcrest.CoreMatchers.startsWith;
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.hasEntry;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 @ExtendWith(VertxExtension.class)
 @SuppressWarnings("checkstyle:ClassFanOutComplexity")
@@ -228,9 +234,9 @@ public class KafkaAssemblyOperatorKRaftMockTest {
             assertThat(actualPod.getMetadata().getAnnotations(), hasEntry(Ca.ANNO_STRIMZI_IO_CLIENTS_CA_CERT_GENERATION, "0"));
             assertThat(actualPod.getMetadata().getAnnotations(), hasEntry(Ca.ANNO_STRIMZI_IO_CLUSTER_CA_CERT_GENERATION, "0"));
 
-            Secret brokersSecret = client.secrets().inNamespace(namespace).withName(KafkaResources.kafkaSecretName(CLUSTER_NAME)).get();
-            assertThat(desiredPod.getMetadata().getAnnotations(), hasEntry(Annotations.ANNO_STRIMZI_SERVER_CERT_HASH, CertUtils.getCertificateThumbprint(brokersSecret, Ca.SecretEntry.CRT.asKey(desiredPod.getMetadata().getName()))));
-            assertThat(actualPod.getMetadata().getAnnotations(), hasEntry(Annotations.ANNO_STRIMZI_SERVER_CERT_HASH, CertUtils.getCertificateThumbprint(brokersSecret, Ca.SecretEntry.CRT.asKey(desiredPod.getMetadata().getName()))));
+            Secret certSecret = client.secrets().inNamespace(namespace).withName(desiredPod.getMetadata().getName()).get();
+            assertThat(desiredPod.getMetadata().getAnnotations(), hasEntry(Annotations.ANNO_STRIMZI_SERVER_CERT_HASH, CertUtils.getCertificateThumbprint(certSecret, Ca.SecretEntry.CRT.asKey(desiredPod.getMetadata().getName()))));
+            assertThat(actualPod.getMetadata().getAnnotations(), hasEntry(Annotations.ANNO_STRIMZI_SERVER_CERT_HASH, CertUtils.getCertificateThumbprint(certSecret, Ca.SecretEntry.CRT.asKey(desiredPod.getMetadata().getName()))));
 
             assertThat(client.configMaps().inNamespace(namespace).withName(desiredPod.getMetadata().getName()).get(), is(notNullValue()));
         });
@@ -246,9 +252,9 @@ public class KafkaAssemblyOperatorKRaftMockTest {
             assertThat(actualPod.getMetadata().getAnnotations(), hasEntry(Ca.ANNO_STRIMZI_IO_CLIENTS_CA_CERT_GENERATION, "0"));
             assertThat(actualPod.getMetadata().getAnnotations(), hasEntry(Ca.ANNO_STRIMZI_IO_CLUSTER_CA_CERT_GENERATION, "0"));
 
-            Secret brokersSecret = client.secrets().inNamespace(namespace).withName(KafkaResources.kafkaSecretName(CLUSTER_NAME)).get();
-            assertThat(desiredPod.getMetadata().getAnnotations(), hasEntry(Annotations.ANNO_STRIMZI_SERVER_CERT_HASH, CertUtils.getCertificateThumbprint(brokersSecret, Ca.SecretEntry.CRT.asKey(desiredPod.getMetadata().getName()))));
-            assertThat(actualPod.getMetadata().getAnnotations(), hasEntry(Annotations.ANNO_STRIMZI_SERVER_CERT_HASH, CertUtils.getCertificateThumbprint(brokersSecret, Ca.SecretEntry.CRT.asKey(desiredPod.getMetadata().getName()))));
+            Secret certSecret = client.secrets().inNamespace(namespace).withName(desiredPod.getMetadata().getName()).get();
+            assertThat(desiredPod.getMetadata().getAnnotations(), hasEntry(Annotations.ANNO_STRIMZI_SERVER_CERT_HASH, CertUtils.getCertificateThumbprint(certSecret, Ca.SecretEntry.CRT.asKey(desiredPod.getMetadata().getName()))));
+            assertThat(actualPod.getMetadata().getAnnotations(), hasEntry(Annotations.ANNO_STRIMZI_SERVER_CERT_HASH, CertUtils.getCertificateThumbprint(certSecret, Ca.SecretEntry.CRT.asKey(desiredPod.getMetadata().getName()))));
 
             assertThat(client.configMaps().inNamespace(namespace).withName(desiredPod.getMetadata().getName()).get(), is(notNullValue()));
         });
@@ -301,7 +307,12 @@ public class KafkaAssemblyOperatorKRaftMockTest {
         List<String> secrets = List.of(KafkaResources.clientsCaKeySecretName(CLUSTER_NAME),
                 KafkaResources.clientsCaCertificateSecretName(CLUSTER_NAME),
                 KafkaResources.clusterCaCertificateSecretName(CLUSTER_NAME),
-                KafkaResources.kafkaSecretName(CLUSTER_NAME),
+                CLUSTER_NAME + "-controllers-0",
+                CLUSTER_NAME + "-controllers-1",
+                CLUSTER_NAME + "-controllers-2",
+                CLUSTER_NAME + "-brokers-10",
+                CLUSTER_NAME + "-brokers-11",
+                CLUSTER_NAME + "-brokers-12",
                 KafkaResources.clusterOperatorCertsSecretName(CLUSTER_NAME));
 
         Checkpoint async = context.checkpoint();
@@ -533,7 +544,9 @@ public class KafkaAssemblyOperatorKRaftMockTest {
 
         operator.reconcile(new Reconciliation("initial-trigger", Kafka.RESOURCE_KIND, namespace, CLUSTER_NAME))
             .onComplete(context.succeeding(v -> context.verify(() -> {
-                assertThat(client.secrets().inNamespace(namespace).withName(KafkaResources.kafkaSecretName(CLUSTER_NAME)).get().getData().size(), is(12));
+                assertThat(client.secrets().inNamespace(namespace).withLabels(Labels.fromMap(kafkaLabels).withStrimziComponentType("kafka").toMap()).list().getItems().size(), is(6));
+                assertThat(client.secrets().inNamespace(namespace).withName(CLUSTER_NAME + "-brokers-13").get(), is(nullValue()));
+                assertThat(client.secrets().inNamespace(namespace).withName(CLUSTER_NAME + "-brokers-14").get(), is(nullValue()));
                 assertThat(client.pods().inNamespace(namespace).withLabels(kafkaLabels).list().getItems().size(), is(6));
                 assertThat(client.pods().inNamespace(namespace).withName(CLUSTER_NAME + "-brokers-13").get(), is(nullValue()));
                 assertThat(client.pods().inNamespace(namespace).withName(CLUSTER_NAME + "-brokers-14").get(), is(nullValue()));
@@ -547,7 +560,9 @@ public class KafkaAssemblyOperatorKRaftMockTest {
             })))
             .compose(v -> operator.reconcile(new Reconciliation("test-trigger", Kafka.RESOURCE_KIND, namespace, CLUSTER_NAME)))
             .onComplete(context.succeeding(v -> context.verify(() -> {
-                assertThat(client.secrets().inNamespace(namespace).withName(KafkaResources.kafkaSecretName(CLUSTER_NAME)).get().getData().size(), is(16));
+                assertThat(client.secrets().inNamespace(namespace).withLabels(Labels.fromMap(kafkaLabels).withStrimziComponentType("kafka").toMap()).list().getItems().size(), is(8));
+                assertThat(client.secrets().inNamespace(namespace).withName(CLUSTER_NAME + "-brokers-13").get(), is(notNullValue()));
+                assertThat(client.secrets().inNamespace(namespace).withName(CLUSTER_NAME + "-brokers-14").get(), is(notNullValue()));
                 assertThat(client.pods().inNamespace(namespace).withLabels(kafkaLabels).list().getItems().size(), is(8));
                 assertThat(client.pods().inNamespace(namespace).withName(CLUSTER_NAME + "-brokers-13").get(), is(notNullValue()));
                 assertThat(client.pods().inNamespace(namespace).withName(CLUSTER_NAME + "-brokers-14").get(), is(notNullValue()));
@@ -578,7 +593,9 @@ public class KafkaAssemblyOperatorKRaftMockTest {
             })))
             .compose(v -> operator.reconcile(new Reconciliation("test-trigger2", Kafka.RESOURCE_KIND, namespace, CLUSTER_NAME)))
             .onComplete(context.succeeding(v -> context.verify(() -> {
-                assertThat(client.secrets().inNamespace(namespace).withName(KafkaResources.kafkaSecretName(CLUSTER_NAME)).get().getData().size(), is(12));
+                assertThat(client.secrets().inNamespace(namespace).withLabels(Labels.fromMap(kafkaLabels).withStrimziComponentType("kafka").toMap()).list().getItems().size(), is(6));
+                assertThat(client.secrets().inNamespace(namespace).withName(CLUSTER_NAME + "-brokers-13").get(), is(nullValue()));
+                assertThat(client.secrets().inNamespace(namespace).withName(CLUSTER_NAME + "-brokers-14").get(), is(nullValue()));
                 assertThat(client.pods().inNamespace(namespace).withLabels(kafkaLabels).list().getItems().size(), is(6));
                 assertThat(client.pods().inNamespace(namespace).withName(CLUSTER_NAME + "-brokers-13").get(), is(nullValue()));
                 assertThat(client.pods().inNamespace(namespace).withName(CLUSTER_NAME + "-brokers-14").get(), is(nullValue()));
@@ -620,8 +637,14 @@ public class KafkaAssemblyOperatorKRaftMockTest {
 
         operator.reconcile(new Reconciliation("initial-trigger", Kafka.RESOURCE_KIND, namespace, CLUSTER_NAME))
             .onComplete(context.succeeding(v -> context.verify(() -> {
-                assertThat(client.secrets().inNamespace(namespace).withName(KafkaResources.kafkaSecretName(CLUSTER_NAME)).get().getData().size(), is(12));
-                assertThat(client.pods().inNamespace(namespace).withLabels(kafkaLabels).list().getItems().size(), is(6));
+                assertThat(client.secrets().inNamespace(namespace).withLabels(Labels.fromMap(kafkaLabels).withStrimziComponentType("kafka").toMap()).list().getItems().size(), is(6));
+                List<Pod> initialPods = client.pods().inNamespace(namespace).withLabels(kafkaLabels).list().getItems();
+                assertThat(initialPods.size(), is(6));
+                for (Pod pod : initialPods) {
+                    Secret certSecret = client.secrets().inNamespace(namespace).withName(pod.getMetadata().getName()).get();
+                    assertThat(certSecret, is(notNullValue()));
+                    assertThat(certSecret.getData().keySet(), hasItems(pod.getMetadata().getName() + ".crt", pod.getMetadata().getName() + ".key"));
+                }
 
                 KafkaNodePool newPool = new KafkaNodePoolBuilder()
                         .withNewMetadata()
@@ -645,11 +668,19 @@ public class KafkaAssemblyOperatorKRaftMockTest {
             .compose(v -> operator.reconcile(new Reconciliation("test-trigger", Kafka.RESOURCE_KIND, namespace, CLUSTER_NAME)))
             .onComplete(context.succeeding(v -> context.verify(() -> {
                 // Assert that the new pool is added
-                assertThat(client.secrets().inNamespace(namespace).withName(KafkaResources.kafkaSecretName(CLUSTER_NAME)).get().getData().size(), is(18));
+                assertThat(client.secrets().inNamespace(namespace).withLabels(Labels.fromMap(kafkaLabels).withStrimziComponentType("kafka").toMap()).list().getItems().size(), is(9));
                 assertThat(client.pods().inNamespace(namespace).withLabels(kafkaLabels).list().getItems().size(), is(9));
-                assertThat(client.pods().inNamespace(namespace).withName(CLUSTER_NAME + "-new-pool-13").get(), is(notNullValue()));
-                assertThat(client.pods().inNamespace(namespace).withName(CLUSTER_NAME + "-new-pool-14").get(), is(notNullValue()));
-                assertThat(client.pods().inNamespace(namespace).withName(CLUSTER_NAME + "-new-pool-15").get(), is(notNullValue()));
+                List<String> expectedNewResources = List.of(
+                        CLUSTER_NAME + "-new-pool-13",
+                        CLUSTER_NAME + "-new-pool-14",
+                        CLUSTER_NAME + "-new-pool-15"
+                );
+                for (String resourceName : expectedNewResources) {
+                    assertThat(client.pods().inNamespace(namespace).withName(resourceName).get(), is(notNullValue()));
+                    Secret certSecret = client.secrets().inNamespace(namespace).withName(resourceName).get();
+                    assertThat(certSecret, is(notNullValue()));
+                    assertThat(certSecret.getData().keySet(), hasItems(resourceName + ".crt", resourceName + ".key"));
+                }
 
                 Kafka kafka = Crds.kafkaOperation(client).inNamespace(namespace).withName(CLUSTER_NAME).get();
                 assertThat(kafka.getStatus().getKafkaNodePools().size(), is(3));
@@ -681,11 +712,17 @@ public class KafkaAssemblyOperatorKRaftMockTest {
             .compose(v -> operator.reconcile(new Reconciliation("test-trigger2", Kafka.RESOURCE_KIND, namespace, CLUSTER_NAME)))
             .onComplete(context.succeeding(v -> context.verify(() -> {
                 // Assert that the new pool is deleted
-                assertThat(client.secrets().inNamespace(namespace).withName(KafkaResources.kafkaSecretName(CLUSTER_NAME)).get().getData().size(), is(12));
+                assertThat(client.secrets().inNamespace(namespace).withLabels(Labels.fromMap(kafkaLabels).withStrimziComponentType("kafka").toMap()).list().getItems().size(), is(6));
                 assertThat(client.pods().inNamespace(namespace).withLabels(kafkaLabels).list().getItems().size(), is(6));
-                assertThat(client.pods().inNamespace(namespace).withName(CLUSTER_NAME + "-new-pool-13").get(), is(nullValue()));
-                assertThat(client.pods().inNamespace(namespace).withName(CLUSTER_NAME + "-new-pool-14").get(), is(nullValue()));
-                assertThat(client.pods().inNamespace(namespace).withName(CLUSTER_NAME + "-new-pool-15").get(), is(nullValue()));
+                List<String> expectedDeletedResources = List.of(
+                        CLUSTER_NAME + "-new-pool-13",
+                        CLUSTER_NAME + "-new-pool-14",
+                        CLUSTER_NAME + "-new-pool-15"
+                );
+                for (String resourceName : expectedDeletedResources) {
+                    assertThat(client.pods().inNamespace(namespace).withName(resourceName).get(), is(nullValue()));
+                    assertThat(client.secrets().inNamespace(namespace).withName(resourceName).get(), is(nullValue()));
+                }
 
                 Kafka kafka = Crds.kafkaOperation(client).inNamespace(namespace).withName(CLUSTER_NAME).get();
                 assertThat(kafka.getStatus().getKafkaNodePools().size(), is(2));
@@ -736,12 +773,12 @@ public class KafkaAssemblyOperatorKRaftMockTest {
                     StrimziPodSet spsControllers = supplier.strimziPodSetOperator.client().inNamespace(namespace).withName(CLUSTER_NAME + "-controllers").get();
                     assertThat(spsControllers, is(notNullValue()));
 
-                    spsControllers.getSpec().getPods().stream().map(PodSetUtils::mapToPod).forEach(pod -> brokerConfigurationAnnotations.put(pod.getMetadata().getName(), pod.getMetadata().getAnnotations().get(KafkaCluster.ANNO_STRIMZI_BROKER_CONFIGURATION_HASH)));
+                    spsControllers.getSpec().getPods().stream().map(PodSetUtils::mapToPod).forEach(pod -> brokerConfigurationAnnotations.put(pod.getMetadata().getName(), pod.getMetadata().getAnnotations().get(Annotations.ANNO_STRIMZI_IO_CONFIGURATION_HASH)));
 
                     StrimziPodSet spsBrokers = supplier.strimziPodSetOperator.client().inNamespace(namespace).withName(CLUSTER_NAME + "-brokers").get();
                     assertThat(spsBrokers, is(notNullValue()));
 
-                    spsBrokers.getSpec().getPods().stream().map(PodSetUtils::mapToPod).forEach(pod -> brokerConfigurationAnnotations.put(pod.getMetadata().getName(), pod.getMetadata().getAnnotations().get(KafkaCluster.ANNO_STRIMZI_BROKER_CONFIGURATION_HASH)));
+                    spsBrokers.getSpec().getPods().stream().map(PodSetUtils::mapToPod).forEach(pod -> brokerConfigurationAnnotations.put(pod.getMetadata().getName(), pod.getMetadata().getAnnotations().get(Annotations.ANNO_STRIMZI_IO_CONFIGURATION_HASH)));
 
                     // Update Kafka with dynamically changeable option that is not controller relevant => controller pod annotations should not change
                     Crds.kafkaOperation(client).inNamespace(namespace).withName(CLUSTER_NAME)
@@ -754,7 +791,7 @@ public class KafkaAssemblyOperatorKRaftMockTest {
 
                     spsControllers.getSpec().getPods().stream().map(PodSetUtils::mapToPod).forEach(pod -> {
                         // Controller annotations be the same
-                        assertThat(pod.getMetadata().getAnnotations().get(KafkaCluster.ANNO_STRIMZI_BROKER_CONFIGURATION_HASH), is(brokerConfigurationAnnotations.get(pod.getMetadata().getName())));
+                        assertThat(pod.getMetadata().getAnnotations().get(Annotations.ANNO_STRIMZI_IO_CONFIGURATION_HASH), is(brokerConfigurationAnnotations.get(pod.getMetadata().getName())));
                     });
 
                     StrimziPodSet spsBrokers = supplier.strimziPodSetOperator.client().inNamespace(namespace).withName(CLUSTER_NAME + "-brokers").get();
@@ -762,7 +799,7 @@ public class KafkaAssemblyOperatorKRaftMockTest {
 
                     spsBrokers.getSpec().getPods().stream().map(PodSetUtils::mapToPod).forEach(pod -> {
                         // Broker annotations should be the same
-                        assertThat(pod.getMetadata().getAnnotations().get(KafkaCluster.ANNO_STRIMZI_BROKER_CONFIGURATION_HASH), is(brokerConfigurationAnnotations.get(pod.getMetadata().getName())));
+                        assertThat(pod.getMetadata().getAnnotations().get(Annotations.ANNO_STRIMZI_IO_CONFIGURATION_HASH), is(brokerConfigurationAnnotations.get(pod.getMetadata().getName())));
                     });
 
                     // Update Kafka with dynamically changeable controller relevant option => controller pod annotations should change
@@ -776,7 +813,7 @@ public class KafkaAssemblyOperatorKRaftMockTest {
 
                     spsControllers.getSpec().getPods().stream().map(PodSetUtils::mapToPod).forEach(pod -> {
                         // Controller annotations should differ
-                        assertThat(pod.getMetadata().getAnnotations().get(KafkaCluster.ANNO_STRIMZI_BROKER_CONFIGURATION_HASH), is(not(brokerConfigurationAnnotations.get(pod.getMetadata().getName()))));
+                        assertThat(pod.getMetadata().getAnnotations().get(Annotations.ANNO_STRIMZI_IO_CONFIGURATION_HASH), is(not(brokerConfigurationAnnotations.get(pod.getMetadata().getName()))));
                     });
 
                     StrimziPodSet spsBrokers = supplier.strimziPodSetOperator.client().inNamespace(namespace).withName(CLUSTER_NAME + "-brokers").get();
@@ -784,7 +821,7 @@ public class KafkaAssemblyOperatorKRaftMockTest {
 
                     spsBrokers.getSpec().getPods().stream().map(PodSetUtils::mapToPod).forEach(pod -> {
                         // Broker annotations should be the same
-                        assertThat(pod.getMetadata().getAnnotations().get(KafkaCluster.ANNO_STRIMZI_BROKER_CONFIGURATION_HASH), is(brokerConfigurationAnnotations.get(pod.getMetadata().getName())));
+                        assertThat(pod.getMetadata().getAnnotations().get(Annotations.ANNO_STRIMZI_IO_CONFIGURATION_HASH), is(brokerConfigurationAnnotations.get(pod.getMetadata().getName())));
                     });
 
                     async.flag();
@@ -801,11 +838,27 @@ public class KafkaAssemblyOperatorKRaftMockTest {
      *     - Third with change to a logging appender => annotations for controller nodes should change, and so should
      *       the annotation for brokers as appenders are not dynamically configurable
      *
+     * With Kafka 4.0+ / Log4j2 we rely on Log4j2 for log reloading. So this tests makes no sense anymore and there is
+     * no rolling update to controllers in Kafka 4.0 clusters because of logging. This test can be removed once we drop the support for Kafka 3.x.
+     *
      * @param context   Test context
      */
     @Test
-    public void testReconcileWithControllerRelevantLoggingChange(VertxTestContext context) {
+    public void testReconcileWithControllerRelevantLoggingChangeWithLog4j1(VertxTestContext context) {
         Checkpoint async = context.checkpoint();
+
+        // Mock the current metadata version to pretend we use Kafka 3.9.0 (the default mock in the supplier mocks latest Kafka)
+        Admin mockAdminClient = supplier.adminClientProvider.createAdminClient(null, null, null);
+        FinalizedVersionRange fvr = mock(FinalizedVersionRange.class);
+        when(fvr.maxVersionLevel()).thenReturn((short) 21);
+        FeatureMetadata fm = mock(FeatureMetadata.class);
+        when(fm.finalizedFeatures()).thenReturn(Map.of(KRaftMetadataManager.METADATA_VERSION_KEY, fvr));
+        DescribeFeaturesResult dfr = mock(DescribeFeaturesResult.class);
+        when(dfr.featureMetadata()).thenReturn(KafkaFuture.completedFuture(fm));
+        when(mockAdminClient.describeFeatures()).thenReturn(dfr);
+
+        Crds.kafkaOperation(client).inNamespace(namespace).withName(CLUSTER_NAME)
+                .edit(k -> new KafkaBuilder(k).editSpec().editKafka().withVersion("3.9.0").endKafka().endSpec().build());
 
         Map<String, String> loggingConfigurationAnnotations = new HashMap<>();
 

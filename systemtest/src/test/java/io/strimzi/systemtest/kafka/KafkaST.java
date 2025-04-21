@@ -56,7 +56,6 @@ import io.strimzi.systemtest.annotations.MultiNodeClusterOnly;
 import io.strimzi.systemtest.annotations.ParallelNamespaceTest;
 import io.strimzi.systemtest.docs.TestDocsLabels;
 import io.strimzi.systemtest.kafkaclients.internalClients.KafkaClients;
-import io.strimzi.systemtest.resources.NodePoolsConverter;
 import io.strimzi.systemtest.resources.ResourceManager;
 import io.strimzi.systemtest.resources.crd.KafkaNodePoolResource;
 import io.strimzi.systemtest.resources.crd.KafkaResource;
@@ -108,7 +107,6 @@ import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.emptyOrNullString;
 import static org.hamcrest.Matchers.not;
 import static org.hamcrest.Matchers.notNullValue;
-import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 @Tag(REGRESSION)
 @SuppressWarnings("checkstyle:ClassFanOutComplexity")
@@ -126,12 +124,11 @@ class KafkaST extends AbstractST {
     private static final String OPENSHIFT_CLUSTER_NAME = "openshift-my-cluster";
 
     @ParallelNamespaceTest
-    @SuppressWarnings({"checkstyle:MethodLength", "deprecation"}) // ZooKeeper is deprecated, but some API methods are still called in this method
     @TestDoc(
         description = @Desc("This test case verifies that Pod's resources (limits and requests), custom JVM configurations, and expected Java configuration are propagated correctly to Pods, containers, and processes."),
         steps = {
-            @Step(value = "Deploy Kafka and its components with custom specifications, including specifying resources and JVM configuration.", expected = "Kafka and its components (ZooKeeper, Entity Operator) are deployed."),
-            @Step(value = "For each component (Kafka, ZooKeeper, Topic Operator, User Operator), verify specified configuration of JVM, resources, and also environment variables.", expected = "Each of the components has requests and limits assigned correctly, JVM, and environment variables configured according to the specification."),
+            @Step(value = "Deploy Kafka and its components with custom specifications, including specifying resources and JVM configuration.", expected = "Kafka and Entity Operator are deployed."),
+            @Step(value = "For each component (Kafka, Topic Operator, User Operator), verify specified configuration of JVM, resources, and also environment variables.", expected = "Each of the components has requests and limits assigned correctly, JVM, and environment variables configured according to the specification."),
             @Step(value = "Wait for a time to observe that no initiated components need rolling update.", expected = "All Kafka components remain in stable state.")
         },
         labels = {
@@ -144,7 +141,6 @@ class KafkaST extends AbstractST {
         ArrayList<SystemProperty> javaSystemProps = new ArrayList<>();
         javaSystemProps.add(new SystemPropertyBuilder().withName("javax.net.debug")
                 .withValue("verbose").build());
-
         Map<String, String> jvmOptionsXX = new HashMap<>();
         jvmOptionsXX.put("UseG1GC", "true");
 
@@ -175,32 +171,26 @@ class KafkaST extends AbstractST {
             .build();
 
         resourceManager.createResourceWithWait(
-            NodePoolsConverter.convertNodePoolsIfNeeded(
-                KafkaNodePoolTemplates.brokerPool(testStorage.getNamespaceName(), testStorage.getBrokerPoolName(), testStorage.getClusterName(), 1)
-                    .editSpec()
-                        .withResources(brokersResReq)
-                        .withJvmOptions(brokerJvmOptions)
-                    .endSpec()
-                    .build(),
-                KafkaNodePoolTemplates.controllerPool(testStorage.getNamespaceName(), testStorage.getControllerPoolName(), testStorage.getClusterName(), 1)
-                    .editSpec()
-                        .withResources(controlResReq)
-                        .withJvmOptions(controlJvmOptions)
-                    .endSpec()
-                    .build()
-            )
+            KafkaNodePoolTemplates.brokerPool(testStorage.getNamespaceName(), testStorage.getBrokerPoolName(), testStorage.getClusterName(), 1)
+                .editSpec()
+                    .withResources(brokersResReq)
+                    .withJvmOptions(brokerJvmOptions)
+                .endSpec()
+                .build(),
+            KafkaNodePoolTemplates.controllerPool(testStorage.getNamespaceName(), testStorage.getControllerPoolName(), testStorage.getClusterName(), 1)
+                .editSpec()
+                    .withResources(controlResReq)
+                    .withJvmOptions(controlJvmOptions)
+                .endSpec()
+                .build()
         );
 
-        Kafka kafka = KafkaTemplates.kafkaEphemeral(testStorage.getNamespaceName(), testStorage.getClusterName(), 1, 1)
+        Kafka kafka = KafkaTemplates.kafka(testStorage.getNamespaceName(), testStorage.getClusterName(), 1)
             .editSpec()
                 .editKafka()
                     .withResources(brokersResReq)
                     .withJvmOptions(brokerJvmOptions)
                 .endKafka()
-                .editZookeeper()
-                    .withResources(controlResReq)
-                    .withJvmOptions(controlJvmOptions)
-                .endZookeeper()
                 .withNewEntityOperator()
                     .withNewTopicOperator()
                         .withResources(
@@ -234,10 +224,6 @@ class KafkaST extends AbstractST {
             .endSpec()
             .build();
 
-        if (Environment.isKRaftModeEnabled()) {
-            kafka.getSpec().setZookeeper(null);
-        }
-
         resourceManager.createResourceWithWait(kafka);
 
         // Make snapshots for Kafka cluster to make sure that there is no rolling update after CO reconciliation
@@ -253,14 +239,6 @@ class KafkaST extends AbstractST {
                 "1536Mi", "1", "1Gi", "50m");
         VerificationUtils.assertJvmOptions(testStorage.getNamespaceName(), brokerPodName, "kafka",
                 "-Xmx1g", "-Xms512m", "-XX:+UseG1GC");
-
-        if (!Environment.isKRaftModeEnabled()) {
-            LOGGER.info("Verifying resources and JVM configuration of ZooKeeper Broker Pod");
-            VerificationUtils.assertPodResourceRequests(testStorage.getNamespaceName(), KafkaResources.zookeeperPodName(testStorage.getClusterName(), 0), "zookeeper",
-                "1G", "500m", "500M", "25m");
-            VerificationUtils.assertJvmOptions(testStorage.getNamespaceName(), KafkaResources.zookeeperPodName(testStorage.getClusterName(), 0), "zookeeper",
-                "-Xmx1G", "-Xms512M", "-XX:+UseG1GC");
-        }
 
         LOGGER.info("Verifying resources, JVM configuration, and environment variables of Entity Operator's components");
 
@@ -301,9 +279,7 @@ class KafkaST extends AbstractST {
         });
 
         LOGGER.info("Checking no rolling update for Kafka cluster");
-        if (!Environment.isKRaftModeEnabled()) {
-            RollingUpdateUtils.waitForNoRollingUpdate(testStorage.getNamespaceName(), testStorage.getControllerSelector(), controllerPods);
-        }
+        RollingUpdateUtils.waitForNoRollingUpdate(testStorage.getNamespaceName(), testStorage.getControllerSelector(), controllerPods);
         RollingUpdateUtils.waitForNoRollingUpdate(testStorage.getNamespaceName(), testStorage.getBrokerSelector(), brokerPods);
         DeploymentUtils.waitForNoRollingUpdate(testStorage.getNamespaceName(), eoDepName, eoPods);
     }
@@ -328,12 +304,10 @@ class KafkaST extends AbstractST {
         LOGGER.info("Deploying Kafka cluster {}", testStorage.getClusterName());
 
         resourceManager.createResourceWithWait(
-            NodePoolsConverter.convertNodePoolsIfNeeded(
-                KafkaNodePoolTemplates.brokerPool(testStorage.getNamespaceName(), testStorage.getBrokerPoolName(), testStorage.getClusterName(), 3).build(),
-                KafkaNodePoolTemplates.controllerPool(testStorage.getNamespaceName(), testStorage.getControllerPoolName(), testStorage.getClusterName(), 3).build()
-            )
+            KafkaNodePoolTemplates.brokerPool(testStorage.getNamespaceName(), testStorage.getBrokerPoolName(), testStorage.getClusterName(), 3).build(),
+            KafkaNodePoolTemplates.controllerPool(testStorage.getNamespaceName(), testStorage.getControllerPoolName(), testStorage.getClusterName(), 3).build()
         );
-        resourceManager.createResourceWithWait(KafkaTemplates.kafkaEphemeral(testStorage.getNamespaceName(), testStorage.getClusterName(), 3).build());
+        resourceManager.createResourceWithWait(KafkaTemplates.kafka(testStorage.getNamespaceName(), testStorage.getClusterName(), 3).build());
 
         Map<String, String> eoSnapshot = DeploymentUtils.depSnapshot(testStorage.getNamespaceName(), KafkaResources.entityOperatorDeploymentName(testStorage.getClusterName()));
 
@@ -421,17 +395,15 @@ class KafkaST extends AbstractST {
         JbodStorage jbodStorage = new JbodStorageBuilder().withVolumes(idZeroVolumeOriginal, idOneVolumeOriginal).build();
 
         resourceManager.createResourceWithWait(
-            NodePoolsConverter.convertNodePoolsIfNeeded(
-                KafkaNodePoolTemplates.brokerPool(testStorage.getNamespaceName(), testStorage.getBrokerPoolName(), testStorage.getClusterName(), kafkaReplicas)
-                    .editSpec()
-                        .withStorage(jbodStorage)
-                    .endSpec()
-                    .build(),
-                KafkaNodePoolTemplates.controllerPool(testStorage.getNamespaceName(), testStorage.getControllerPoolName(), testStorage.getClusterName(), kafkaReplicas).build()
-            )
+            KafkaNodePoolTemplates.brokerPool(testStorage.getNamespaceName(), testStorage.getBrokerPoolName(), testStorage.getClusterName(), kafkaReplicas)
+                .editSpec()
+                    .withStorage(jbodStorage)
+                .endSpec()
+                .build(),
+            KafkaNodePoolTemplates.controllerPool(testStorage.getNamespaceName(), testStorage.getControllerPoolName(), testStorage.getClusterName(), kafkaReplicas).build()
         );
 
-        resourceManager.createResourceWithWait(KafkaTemplates.kafkaPersistent(testStorage.getNamespaceName(), testStorage.getClusterName(), kafkaReplicas)
+        resourceManager.createResourceWithWait(KafkaTemplates.kafka(testStorage.getNamespaceName(), testStorage.getClusterName(), kafkaReplicas)
             .editSpec()
                 .editKafka()
                     .withStorage(jbodStorage)
@@ -446,19 +418,11 @@ class KafkaST extends AbstractST {
         //change value of first PVC to delete its claim once Kafka is deleted.
         LOGGER.info("Update Volume with id=0 in Kafka CR by setting 'Delete Claim' property to false");
 
-        if (Environment.isKafkaNodePoolsEnabled()) {
-            KafkaNodePoolResource.replaceKafkaNodePoolResourceInSpecificNamespace(testStorage.getNamespaceName(), testStorage.getBrokerPoolName(), resource -> {
-                LOGGER.debug(resource.getMetadata().getName());
-                JbodStorage jBODVolumeStorage = (JbodStorage) resource.getSpec().getStorage();
-                jBODVolumeStorage.setVolumes(List.of(idZeroVolumeModified, idOneVolumeOriginal));
-            });
-        } else {
-            KafkaResource.replaceKafkaResourceInSpecificNamespace(testStorage.getNamespaceName(), testStorage.getClusterName(), resource -> {
-                LOGGER.debug(resource.getMetadata().getName());
-                JbodStorage jBODVolumeStorage = (JbodStorage) resource.getSpec().getKafka().getStorage();
-                jBODVolumeStorage.setVolumes(List.of(idZeroVolumeModified, idOneVolumeOriginal));
-            });
-        }
+        KafkaNodePoolResource.replaceKafkaNodePoolResourceInSpecificNamespace(testStorage.getNamespaceName(), testStorage.getBrokerPoolName(), resource -> {
+            LOGGER.debug(resource.getMetadata().getName());
+            JbodStorage jBODVolumeStorage = (JbodStorage) resource.getSpec().getStorage();
+            jBODVolumeStorage.setVolumes(List.of(idZeroVolumeModified, idOneVolumeOriginal));
+        });
 
         TestUtils.waitFor("PVC(s)' annotation to change according to Kafka JBOD storage 'delete claim'", TestConstants.GLOBAL_POLL_INTERVAL, TestConstants.SAFETY_RECONCILIATION_INTERVAL,
             () -> kubeClient().listPersistentVolumeClaims(testStorage.getNamespaceName(), testStorage.getClusterName()).stream()
@@ -471,9 +435,7 @@ class KafkaST extends AbstractST {
         LOGGER.info("Deleting Kafka: {}/{} cluster", testStorage.getNamespaceName(), testStorage.getClusterName());
         // we cannot use ResourceManager here, as it would delete all the PVCs (part of the KafkaResource#delete method)
         cmdKubeClient(testStorage.getNamespaceName()).deleteByName(Kafka.RESOURCE_KIND, testStorage.getClusterName());
-        if (Environment.isKafkaNodePoolsEnabled()) {
-            cmdKubeClient(testStorage.getNamespaceName()).deleteByName(KafkaNodePool.RESOURCE_KIND, testStorage.getBrokerPoolName());
-        }
+        cmdKubeClient(testStorage.getNamespaceName()).deleteByName(KafkaNodePool.RESOURCE_KIND, testStorage.getBrokerPoolName());
 
         LOGGER.info("Waiting for PVCs deletion");
         PersistentVolumeClaimUtils.waitForJbodStorageDeletion(testStorage.getNamespaceName(), volumesCount, testStorage.getBrokerComponentName(), List.of(idZeroVolumeModified, idOneVolumeOriginal));
@@ -503,16 +465,14 @@ class KafkaST extends AbstractST {
 
         LOGGER.info("Creating Kafka without external listener");
         resourceManager.createResourceWithWait(
-            NodePoolsConverter.convertNodePoolsIfNeeded(
-                KafkaNodePoolTemplates.brokerPoolPersistentStorage(testStorage.getNamespaceName(), testStorage.getBrokerPoolName(), testStorage.getClusterName(), 3).build(),
-                KafkaNodePoolTemplates.controllerPoolPersistentStorage(testStorage.getNamespaceName(), testStorage.getControllerPoolName(), testStorage.getClusterName(), 1).build()
-            )
+            KafkaNodePoolTemplates.brokerPoolPersistentStorage(testStorage.getNamespaceName(), testStorage.getBrokerPoolName(), testStorage.getClusterName(), 3).build(),
+            KafkaNodePoolTemplates.controllerPoolPersistentStorage(testStorage.getNamespaceName(), testStorage.getControllerPoolName(), testStorage.getClusterName(), 1).build()
         );
-        resourceManager.createResourceWithWait(KafkaTemplates.kafkaPersistent(testStorage.getNamespaceName(), testStorage.getClusterName(), 3, 1).build());
+        resourceManager.createResourceWithWait(KafkaTemplates.kafka(testStorage.getNamespaceName(), testStorage.getClusterName(), 3).build());
 
-        final String brokerSecret = testStorage.getClusterName() + "-kafka-brokers";
-
-        Secret secretsWithoutExt = kubeClient(testStorage.getNamespaceName()).getSecret(testStorage.getNamespaceName(), brokerSecret);
+        Map<String, Secret> secretsWithoutExt = kubeClient(testStorage.getNamespaceName()).listSecrets()
+                .stream()
+                .collect(Collectors.toMap(secret -> secret.getMetadata().getName(), secret -> secret));
 
         LOGGER.info("Editing Kafka with external listener");
         KafkaResource.replaceKafkaResourceInSpecificNamespace(testStorage.getNamespaceName(), testStorage.getClusterName(), kafka -> {
@@ -538,18 +498,17 @@ class KafkaST extends AbstractST {
 
         RollingUpdateUtils.waitTillComponentHasRolled(testStorage.getNamespaceName(), testStorage.getBrokerSelector(), 3, PodUtils.podSnapshot(testStorage.getNamespaceName(), testStorage.getBrokerSelector()));
 
-        Secret secretsWithExt = kubeClient(testStorage.getNamespaceName()).getSecret(testStorage.getNamespaceName(), brokerSecret);
-
         LOGGER.info("Checking Secrets");
         kubeClient(testStorage.getNamespaceName()).listPodsByPrefixInName(testStorage.getNamespaceName(), StrimziPodSetResource.getBrokerComponentName(testStorage.getClusterName())).forEach(kafkaPod -> {
             String kafkaPodName = kafkaPod.getMetadata().getName();
-            assertThat(secretsWithExt.getData().get(kafkaPodName + ".crt"), is(not(secretsWithoutExt.getData().get(kafkaPodName + ".crt"))));
-            assertThat(secretsWithExt.getData().get(kafkaPodName + ".key"), is(not(secretsWithoutExt.getData().get(kafkaPodName + ".key"))));
+            Secret secretWithExt = kubeClient(testStorage.getNamespaceName()).getSecret(testStorage.getNamespaceName(), kafkaPodName);
+            assertThat(secretWithExt.getData().get(kafkaPodName + ".crt"), is(not(secretsWithoutExt.get(kafkaPodName).getData().get(kafkaPodName + ".crt"))));
+            assertThat(secretWithExt.getData().get(kafkaPodName + ".key"), is(not(secretsWithoutExt.get(kafkaPodName).getData().get(kafkaPodName + ".key"))));
         });
     }
 
     @ParallelNamespaceTest
-    @SuppressWarnings({"checkstyle:JavaNCSS", "checkstyle:NPathComplexity", "checkstyle:MethodLength", "checkstyle:CyclomaticComplexity", "deprecation"}) // ZooKeeper is deprecated, but some methods from the API are still called here
+    @SuppressWarnings({"checkstyle:JavaNCSS", "checkstyle:NPathComplexity", "checkstyle:MethodLength", "checkstyle:CyclomaticComplexity"})
     @TestDoc(
         description = @Desc("This test case verifies the presence of expected Strimzi specific labels, also labels and annotations specified by user. Some user-specified labels are later modified (new one is added, one is modified) which triggers rolling update after which all changes took place as expected."),
         steps = {
@@ -607,30 +566,28 @@ class KafkaST extends AbstractST {
             .build();
 
         resourceManager.createResourceWithWait(
-            NodePoolsConverter.convertNodePoolsIfNeeded(
-                KafkaNodePoolTemplates.brokerPoolPersistentStorage(testStorage.getNamespaceName(), testStorage.getBrokerPoolName(), testStorage.getClusterName(), 3)
-                    .editMetadata()
-                        .addToLabels(customSpecifiedLabels)
-                    .endMetadata()
-                    .editSpec()
-                        .withNewTemplate()
-                            .withPersistentVolumeClaim(pvcResourceTemplate)
-                        .endTemplate()
-                        .withStorage(jbodStorage)
-                    .endSpec()
-                    .build(),
-                KafkaNodePoolTemplates.controllerPoolPersistentStorage(testStorage.getNamespaceName(), testStorage.getControllerPoolName(), testStorage.getClusterName(), 1)
-                    .editSpec()
-                        .withNewTemplate()
-                            .withPersistentVolumeClaim(pvcResourceTemplate)
-                        .endTemplate()
-                        .withStorage(persistentClaimStorage)
-                    .endSpec()
-                    .build()
-            )
+            KafkaNodePoolTemplates.brokerPoolPersistentStorage(testStorage.getNamespaceName(), testStorage.getBrokerPoolName(), testStorage.getClusterName(), 3)
+                .editMetadata()
+                    .addToLabels(customSpecifiedLabels)
+                .endMetadata()
+                .editSpec()
+                    .withNewTemplate()
+                        .withPersistentVolumeClaim(pvcResourceTemplate)
+                    .endTemplate()
+                    .withStorage(jbodStorage)
+                .endSpec()
+                .build(),
+            KafkaNodePoolTemplates.controllerPoolPersistentStorage(testStorage.getNamespaceName(), testStorage.getControllerPoolName(), testStorage.getClusterName(), 1)
+                .editSpec()
+                    .withNewTemplate()
+                        .withPersistentVolumeClaim(pvcResourceTemplate)
+                    .endTemplate()
+                    .withStorage(persistentClaimStorage)
+                .endSpec()
+                .build()
         );
 
-        final KafkaBuilder kafkaBuilder = KafkaTemplates.kafkaPersistent(testStorage.getNamespaceName(), testStorage.getClusterName(), 3, 1)
+        final KafkaBuilder kafkaBuilder = KafkaTemplates.kafka(testStorage.getNamespaceName(), testStorage.getClusterName(), 3)
             .editMetadata()
                 .withLabels(customSpecifiedLabels)
             .endMetadata()
@@ -642,19 +599,6 @@ class KafkaST extends AbstractST {
                     .withStorage(jbodStorage)
                 .endKafka()
             .endSpec();
-
-        // KRaft disabled we also use ZK with JBOD (otherwise we use controller...)
-        if (!Environment.isKRaftModeEnabled()) {
-            kafkaBuilder
-                .editSpec()
-                    .editZookeeper()
-                        .withNewTemplate()
-                            .withPersistentVolumeClaim(pvcResourceTemplate)
-                        .endTemplate()
-                        .withStorage(persistentClaimStorage)
-                    .endZookeeper()
-                .endSpec();
-        }
 
         resourceManager.createResourceWithWait(kafkaBuilder.build());
         resourceManager.createResourceWithWait(KafkaTopicTemplates.topic(testStorage).build());
@@ -674,15 +618,13 @@ class KafkaST extends AbstractST {
 
         Map<String, String> kafkaLabelsObtained = StrimziPodSetUtils.getLabelsOfStrimziPodSet(testStorage.getNamespaceName(), testStorage.getBrokerComponentName());
 
-        LOGGER.info("Verifying labels of StrimziPodSet of Kafka resource");
+        LOGGER.info("Verifying labels of StrimziPodSet of Kafka resource - broker role");
         verifyAppLabels(kafkaLabelsObtained);
 
-        if (!Environment.isKRaftModeEnabled()) {
-            Map<String, String> zooLabels = StrimziPodSetUtils.getLabelsOfStrimziPodSet(testStorage.getNamespaceName(), testStorage.getControllerComponentName());
+        kafkaLabelsObtained = StrimziPodSetUtils.getLabelsOfStrimziPodSet(testStorage.getNamespaceName(), testStorage.getControllerComponentName());
 
-            LOGGER.info("Verifying labels of StrimziPodSet of ZooKeeper resource");
-            verifyAppLabels(zooLabels);
-        }
+        LOGGER.info("Verifying labels of StrimziPodSet of Kafka resource - controller role");
+        verifyAppLabels(kafkaLabelsObtained);
 
         LOGGER.info("---> SERVICES <---");
 
@@ -755,7 +697,7 @@ class KafkaST extends AbstractST {
 
         LOGGER.info("--> Test Customer specific labels manipulation (add, update) of Kafka CR and (update) PVC <--");
 
-        LOGGER.info("Take a snapshot of ZooKeeper and Kafka Pods in order to wait for their respawn after rollout");
+        LOGGER.info("Take a snapshot of Kafka Pods in order to wait for their respawn after rollout");
         Map<String, String> controllerPods = PodUtils.podSnapshot(testStorage.getNamespaceName(), testStorage.getControllerSelector());
         Map<String, String> brokerPods = PodUtils.podSnapshot(testStorage.getNamespaceName(), testStorage.getBrokerSelector());
 
@@ -773,41 +715,30 @@ class KafkaST extends AbstractST {
         LOGGER.info("New values of labels which are to modify label and annotation of PVC present in Kafka CR, with following values {}", customSpecifiedLabelOrAnnotationPvc);
 
         LOGGER.info("Edit Kafka labels in Kafka CR,as well as labels, and annotations of PVCs");
-        if (Environment.isKafkaNodePoolsEnabled()) {
-            KafkaNodePoolResource.replaceKafkaNodePoolResourceInSpecificNamespace(testStorage.getNamespaceName(), testStorage.getBrokerPoolName(), resource -> {
-                for (Map.Entry<String, String> label : customSpecifiedLabels.entrySet()) {
-                    resource.getMetadata().getLabels().put(label.getKey(), label.getValue());
-                }
-                resource.getSpec().getTemplate().getPersistentVolumeClaim().getMetadata().setLabels(customSpecifiedLabelOrAnnotationPvc);
-                resource.getSpec().getTemplate().getPersistentVolumeClaim().getMetadata().setAnnotations(customSpecifiedLabelOrAnnotationPvc);
-            });
 
-            if (Environment.isKRaftModeEnabled()) {
-                KafkaNodePoolResource.replaceKafkaNodePoolResourceInSpecificNamespace(testStorage.getNamespaceName(), testStorage.getControllerPoolName(), resource -> {
-                    for (Map.Entry<String, String> label : customSpecifiedLabels.entrySet()) {
-                        resource.getMetadata().getLabels().put(label.getKey(), label.getValue());
-                    }
-                    resource.getSpec().getTemplate().getPersistentVolumeClaim().getMetadata().setLabels(customSpecifiedLabelOrAnnotationPvc);
-                    resource.getSpec().getTemplate().getPersistentVolumeClaim().getMetadata().setAnnotations(customSpecifiedLabelOrAnnotationPvc);
-                });
+        KafkaNodePoolResource.replaceKafkaNodePoolResourceInSpecificNamespace(testStorage.getNamespaceName(), testStorage.getBrokerPoolName(), resource -> {
+            for (Map.Entry<String, String> label : customSpecifiedLabels.entrySet()) {
+                resource.getMetadata().getLabels().put(label.getKey(), label.getValue());
             }
-        }
+            resource.getSpec().getTemplate().getPersistentVolumeClaim().getMetadata().setLabels(customSpecifiedLabelOrAnnotationPvc);
+            resource.getSpec().getTemplate().getPersistentVolumeClaim().getMetadata().setAnnotations(customSpecifiedLabelOrAnnotationPvc);
+        });
+
+        KafkaNodePoolResource.replaceKafkaNodePoolResourceInSpecificNamespace(testStorage.getNamespaceName(), testStorage.getControllerPoolName(), resource -> {
+            for (Map.Entry<String, String> label : customSpecifiedLabels.entrySet()) {
+                resource.getMetadata().getLabels().put(label.getKey(), label.getValue());
+            }
+            resource.getSpec().getTemplate().getPersistentVolumeClaim().getMetadata().setLabels(customSpecifiedLabelOrAnnotationPvc);
+            resource.getSpec().getTemplate().getPersistentVolumeClaim().getMetadata().setAnnotations(customSpecifiedLabelOrAnnotationPvc);
+        });
 
         KafkaResource.replaceKafkaResourceInSpecificNamespace(testStorage.getNamespaceName(), testStorage.getClusterName(), resource -> {
             for (Map.Entry<String, String> label : customSpecifiedLabels.entrySet()) {
                 resource.getMetadata().getLabels().put(label.getKey(), label.getValue());
             }
-            resource.getSpec().getKafka().getTemplate().getPersistentVolumeClaim().getMetadata().setLabels(customSpecifiedLabelOrAnnotationPvc);
-            resource.getSpec().getKafka().getTemplate().getPersistentVolumeClaim().getMetadata().setAnnotations(customSpecifiedLabelOrAnnotationPvc);
-
-            // if KRaft disabled we can also configure ZK spec
-            if (!Environment.isKRaftModeEnabled()) {
-                resource.getSpec().getZookeeper().getTemplate().getPersistentVolumeClaim().getMetadata().setLabels(customSpecifiedLabelOrAnnotationPvc);
-                resource.getSpec().getZookeeper().getTemplate().getPersistentVolumeClaim().getMetadata().setAnnotations(customSpecifiedLabelOrAnnotationPvc);
-            }
         });
 
-        LOGGER.info("Waiting for rolling update of ZooKeeper and Kafka");
+        LOGGER.info("Waiting for rolling update of Kafka");
         RollingUpdateUtils.waitTillComponentHasRolled(testStorage.getNamespaceName(), testStorage.getControllerSelector(), 1, controllerPods);
         RollingUpdateUtils.waitTillComponentHasRolled(testStorage.getNamespaceName(), testStorage.getBrokerSelector(), 3, brokerPods);
 
@@ -892,12 +823,10 @@ class KafkaST extends AbstractST {
         kafkaConfig.put("offsets.topic.num.partitions", "100");
 
         resourceManager.createResourceWithWait(
-            NodePoolsConverter.convertNodePoolsIfNeeded(
-                KafkaNodePoolTemplates.brokerPoolPersistentStorage(testStorage.getNamespaceName(), testStorage.getBrokerPoolName(), testStorage.getClusterName(), 1).build(),
-                KafkaNodePoolTemplates.controllerPoolPersistentStorage(testStorage.getNamespaceName(), testStorage.getControllerPoolName(), testStorage.getClusterName(), 1).build()
-            )
+            KafkaNodePoolTemplates.brokerPoolPersistentStorage(testStorage.getNamespaceName(), testStorage.getBrokerPoolName(), testStorage.getClusterName(), 1).build(),
+            KafkaNodePoolTemplates.controllerPoolPersistentStorage(testStorage.getNamespaceName(), testStorage.getControllerPoolName(), testStorage.getClusterName(), 1).build()
         );
-        resourceManager.createResourceWithWait(KafkaTemplates.kafkaPersistent(testStorage.getNamespaceName(), testStorage.getClusterName(), 1, 1)
+        resourceManager.createResourceWithWait(KafkaTemplates.kafka(testStorage.getNamespaceName(), testStorage.getClusterName(), 1)
             .editSpec()
                 .editKafka()
                     .withConfig(kafkaConfig)
@@ -965,9 +894,9 @@ class KafkaST extends AbstractST {
     @ParallelNamespaceTest
     @Tag(CRUISE_CONTROL)
     @TestDoc(
-        description = @Desc("This test case verifies that Kafka (with all its components, including Zookeeper, Entity Operator, KafkaExporter, CruiseControl) configured with 'withReadOnlyRootFilesystem' can be deployed and also works correctly."),
+        description = @Desc("This test case verifies that Kafka (with all its components, including Entity Operator, KafkaExporter, CruiseControl) configured with 'withReadOnlyRootFilesystem' can be deployed and also works correctly."),
         steps = {
-            @Step(value = "Deploy persistent Kafka with 3 Kafka and Zookeeper replicas, Entity Operator, CruiseControl, and KafkaExporter. Each component has configuration 'withReadOnlyRootFilesystem' set to true.", expected = "Kafka and its components are deployed."),
+            @Step(value = "Deploy persistent Kafka with 3 replicas, Entity Operator, CruiseControl, and KafkaExporter. Each component has configuration 'withReadOnlyRootFilesystem' set to true.", expected = "Kafka and its components are deployed."),
             @Step(value = "Create Kafka producer and consumer.", expected = "Kafka clients are successfully created."),
             @Step(value = "Produce and consume messages using created clients.", expected = "Messages are successfully sent and received.")
         },
@@ -975,11 +904,10 @@ class KafkaST extends AbstractST {
             @Label(value = TestDocsLabels.KAFKA)
         }
     )
-    @SuppressWarnings("deprecation") // ZooKeeper is deprecated, but some APi methods are still called here
     void testReadOnlyRootFileSystem() {
         final TestStorage testStorage = new TestStorage(ResourceManager.getTestContext());
 
-        Kafka kafka = KafkaTemplates.kafkaPersistent(testStorage.getNamespaceName(), testStorage.getClusterName(), 3, 3)
+        Kafka kafka = KafkaTemplates.kafka(testStorage.getNamespaceName(), testStorage.getClusterName(), 3)
                 .editSpec()
                     .editKafka()
                         .withNewTemplate()
@@ -988,13 +916,6 @@ class KafkaST extends AbstractST {
                             .endKafkaContainer()
                         .endTemplate()
                     .endKafka()
-                    .editZookeeper()
-                        .withNewTemplate()
-                            .withNewZookeeperContainer()
-                                .withSecurityContext(new SecurityContextBuilder().withReadOnlyRootFilesystem(true).build())
-                            .endZookeeperContainer()
-                        .endTemplate()
-                    .endZookeeper()
                     .editEntityOperator()
                         .withNewTemplate()
                             .withNewTopicOperatorContainer()
@@ -1022,31 +943,25 @@ class KafkaST extends AbstractST {
                 .endSpec()
                 .build();
 
-        if (Environment.isKRaftModeEnabled()) {
-            kafka.getSpec().setZookeeper(null);
-        }
-
         resourceManager.createResourceWithWait(
-            NodePoolsConverter.convertNodePoolsIfNeeded(
-                KafkaNodePoolTemplates.brokerPool(testStorage.getNamespaceName(), testStorage.getBrokerPoolName(), testStorage.getClusterName(), 3)
-                    .editSpec()
-                        .withNewTemplate()
-                            .withNewKafkaContainer()
-                                .withSecurityContext(new SecurityContextBuilder().withReadOnlyRootFilesystem(true).build())
-                            .endKafkaContainer()
-                        .endTemplate()
-                    .endSpec()
-                    .build(),
-                KafkaNodePoolTemplates.controllerPool(testStorage.getNamespaceName(), testStorage.getControllerPoolName(), testStorage.getClusterName(), 3)
-                    .editSpec()
-                        .withNewTemplate()
-                            .withNewKafkaContainer()
-                                .withSecurityContext(new SecurityContextBuilder().withReadOnlyRootFilesystem(true).build())
-                            .endKafkaContainer()
-                        .endTemplate()
-                    .endSpec()
-                    .build()
-            )
+            KafkaNodePoolTemplates.brokerPool(testStorage.getNamespaceName(), testStorage.getBrokerPoolName(), testStorage.getClusterName(), 3)
+                .editSpec()
+                    .withNewTemplate()
+                        .withNewKafkaContainer()
+                            .withSecurityContext(new SecurityContextBuilder().withReadOnlyRootFilesystem(true).build())
+                        .endKafkaContainer()
+                    .endTemplate()
+                .endSpec()
+                .build(),
+            KafkaNodePoolTemplates.controllerPool(testStorage.getNamespaceName(), testStorage.getControllerPoolName(), testStorage.getClusterName(), 3)
+                .editSpec()
+                    .withNewTemplate()
+                        .withNewKafkaContainer()
+                            .withSecurityContext(new SecurityContextBuilder().withReadOnlyRootFilesystem(true).build())
+                        .endKafkaContainer()
+                    .endTemplate()
+                .endSpec()
+                .build()
         );
         resourceManager.createResourceWithWait(kafka);
 
@@ -1078,12 +993,10 @@ class KafkaST extends AbstractST {
         String nonExistingVersionMessage = "Unsupported Kafka.spec.kafka.version: " + nonExistingVersion + ". Supported versions are:.*";
 
         resourceManager.createResourceWithWait(
-            NodePoolsConverter.convertNodePoolsIfNeeded(
-                KafkaNodePoolTemplates.brokerPool(testStorage.getNamespaceName(), testStorage.getBrokerPoolName(), testStorage.getClusterName(), 1).build(),
-                KafkaNodePoolTemplates.controllerPool(testStorage.getNamespaceName(), testStorage.getControllerPoolName(), testStorage.getClusterName(), 1).build()
-            )
+            KafkaNodePoolTemplates.brokerPool(testStorage.getNamespaceName(), testStorage.getBrokerPoolName(), testStorage.getClusterName(), 1).build(),
+            KafkaNodePoolTemplates.controllerPool(testStorage.getNamespaceName(), testStorage.getControllerPoolName(), testStorage.getClusterName(), 1).build()
         );
-        resourceManager.createResourceWithoutWait(KafkaTemplates.kafkaEphemeral(testStorage.getNamespaceName(), testStorage.getClusterName(), 1, 1)
+        resourceManager.createResourceWithoutWait(KafkaTemplates.kafka(testStorage.getNamespaceName(), testStorage.getClusterName(), 1)
             .editSpec()
                 .editKafka()
                     .withVersion(nonExistingVersion)
@@ -1127,20 +1040,18 @@ class KafkaST extends AbstractST {
         PersistentClaimStorage vol1Modified = new PersistentClaimStorageBuilder().withId(1).withSize("5Gi").withDeleteClaim(true).build();
 
         resourceManager.createResourceWithWait(
-            NodePoolsConverter.convertNodePoolsIfNeeded(
-                KafkaNodePoolTemplates.brokerPoolPersistentStorage(testStorage.getNamespaceName(), testStorage.getBrokerPoolName(), testStorage.getClusterName(), numberOfKafkaReplicas)
-                    .editSpec()
-                    .withStorage(
-                        new JbodStorageBuilder()
-                            // add two small volumes
-                            .addToVolumes(vol0, vol1)
-                            .build())
-                    .endSpec()
-                    .build(),
-                KafkaNodePoolTemplates.controllerPoolPersistentStorage(testStorage.getNamespaceName(), testStorage.getControllerPoolName(), testStorage.getClusterName(), 3).build()
-            )
+            KafkaNodePoolTemplates.brokerPoolPersistentStorage(testStorage.getNamespaceName(), testStorage.getBrokerPoolName(), testStorage.getClusterName(), numberOfKafkaReplicas)
+                .editSpec()
+                .withStorage(
+                    new JbodStorageBuilder()
+                        // add two small volumes
+                        .addToVolumes(vol0, vol1)
+                        .build())
+                .endSpec()
+                .build(),
+            KafkaNodePoolTemplates.controllerPoolPersistentStorage(testStorage.getNamespaceName(), testStorage.getControllerPoolName(), testStorage.getClusterName(), 3).build()
         );
-        resourceManager.createResourceWithWait(KafkaTemplates.kafkaPersistent(testStorage.getNamespaceName(), testStorage.getClusterName(), numberOfKafkaReplicas, 3)
+        resourceManager.createResourceWithWait(KafkaTemplates.kafka(testStorage.getNamespaceName(), testStorage.getClusterName(), numberOfKafkaReplicas)
             .editSpec()
                 .editKafka()
                     .withStorage(
@@ -1169,6 +1080,8 @@ class KafkaST extends AbstractST {
         KafkaClients kafkaBasicClientJob = ClientUtils.getContinuousPlainClientBuilder(testStorage)
             .withMessageCount(continuousClientsMessageCount)
             .withAdditionalConfig(producerAdditionConfiguration)
+            // TODO: needed because of bug in test-clients - https://github.com/strimzi/test-clients/issues/119
+            .withMessagesPerTransaction("1")
             .build();
 
         resourceManager.createResourceWithWait(kafkaBasicClientJob.producerStrimzi(), kafkaBasicClientJob.consumerStrimzi());
@@ -1181,27 +1094,15 @@ class KafkaST extends AbstractST {
         // Replace Jbod to bigger one volume to Kafka => triggers RU
         LOGGER.info("Replace JBOD to bigger one volume to the Kafka cluster {}", testStorage.getBrokerComponentName());
 
-        if (Environment.isKafkaNodePoolsEnabled()) {
-            KafkaNodePoolResource.replaceKafkaNodePoolResourceInSpecificNamespace(testStorage.getNamespaceName(), testStorage.getBrokerPoolName(), kafkaNodePool -> {
-                JbodStorage storage = (JbodStorage) kafkaNodePool.getSpec().getStorage();
+        KafkaNodePoolResource.replaceKafkaNodePoolResourceInSpecificNamespace(testStorage.getNamespaceName(), testStorage.getBrokerPoolName(), kafkaNodePool -> {
+            JbodStorage storage = (JbodStorage) kafkaNodePool.getSpec().getStorage();
 
-                // set modified volume
-                storage.setVolumes(List.of(vol0, vol1Modified));
+            // set modified volume
+            storage.setVolumes(List.of(vol0, vol1Modified));
 
-                // override storage
-                kafkaNodePool.getSpec().setStorage(storage);
-            });
-        } else {
-            KafkaResource.replaceKafkaResourceInSpecificNamespace(testStorage.getNamespaceName(), testStorage.getClusterName(), kafka -> {
-                JbodStorage storage = (JbodStorage) kafka.getSpec().getKafka().getStorage();
-
-                // set modified volume
-                storage.setVolumes(List.of(vol0, vol1Modified));
-
-                // override storage
-                kafka.getSpec().getKafka().setStorage(storage);
-            });
-        }
+            // override storage
+            kafkaNodePool.getSpec().setStorage(storage);
+        });
 
         // check that volume with index 1 change its size
         PersistentVolumeClaimUtils.waitUntilSpecificPvcSizeChange(
@@ -1224,57 +1125,6 @@ class KafkaST extends AbstractST {
         // ##############################
     }
 
-    @ParallelNamespaceTest()
-    @TestDoc(
-        description = @Desc("This test case verifies basic working of Kafka Cluster managed by Cluster Operator with KRaft."),
-        steps = {
-            @Step(value = "Deploy Kafka annotated to enable KRaft (and additionally annotated to enable KafkaNodePool management), and configure a KafkaNodePool resource to target the Kafka cluster.", expected = "Kafka is deployed, and the KafkaNodePool resource targets the cluster as expected."),
-            @Step(value = "Produce and consume messages in given Kafka Cluster.", expected = "Clients can produce and consume messages."),
-            @Step(value = "Trigger manual Rolling Update.", expected = "Rolling update is triggered and completed shortly after.")
-        },
-        labels = {
-            @Label(value = TestDocsLabels.KAFKA)
-        }
-    )
-    void testKRaftMode() {
-        assumeTrue(Environment.isKRaftModeEnabled() && Environment.isKafkaNodePoolsEnabled());
-
-        final TestStorage testStorage = new TestStorage(ResourceManager.getTestContext());
-        final int kafkaReplicas = 3;
-
-        resourceManager.createResourceWithWait(
-            KafkaNodePoolTemplates.brokerPoolPersistentStorage(testStorage.getNamespaceName(), testStorage.getBrokerPoolName(), testStorage.getClusterName(), kafkaReplicas).build(),
-            KafkaNodePoolTemplates.controllerPoolPersistentStorage(testStorage.getNamespaceName(), testStorage.getControllerPoolName(), testStorage.getClusterName(), kafkaReplicas).build(),
-            KafkaTemplates.kafkaPersistentKRaft(testStorage.getNamespaceName(), testStorage.getClusterName(), kafkaReplicas).build()
-        );
-
-        // Check that there is no ZooKeeper
-        Map<String, String> zkPods = PodUtils.podSnapshot(testStorage.getNamespaceName(),
-            KafkaResource.getLabelSelector(testStorage.getClusterName(), KafkaResources.zookeeperComponentName(testStorage.getClusterName())));
-        assertThat("No ZooKeeper Pods should exist", zkPods.size(), is(0));
-
-        // create KafkaTopic with replication factor on all brokers and min.insync replicas configuration to not loss data during Rolling Update.
-        resourceManager.createResourceWithWait(KafkaTopicTemplates.topic(testStorage.getNamespaceName(), testStorage.getContinuousTopicName(), testStorage.getClusterName(), 1, kafkaReplicas, kafkaReplicas - 1).build());
-
-        KafkaClients clients = ClientUtils.getContinuousPlainClientBuilder(testStorage).build();
-        LOGGER.info("Producing and Consuming messages with continuous clients: {}, {} in Namespace {}", testStorage.getContinuousProducerName(), testStorage.getContinuousConsumerName(), testStorage.getNamespaceName());
-        resourceManager.createResourceWithWait(
-            clients.producerStrimzi(),
-            clients.consumerStrimzi()
-        );
-
-        // Roll Kafka
-        LOGGER.info("Forcing rolling update of Kafka via read-only configuration change");
-        final Map<String, String> brokerPods = PodUtils.podSnapshot(testStorage.getNamespaceName(), testStorage.getBrokerPoolSelector());
-        KafkaResource.replaceKafkaResourceInSpecificNamespace(testStorage.getNamespaceName(), testStorage.getClusterName(), k -> k.getSpec().getKafka().getConfig().put("log.retention.hours", 72));
-
-        LOGGER.info("Waiting for the next reconciliation to happen");
-        RollingUpdateUtils.waitTillComponentHasRolled(testStorage.getNamespaceName(), testStorage.getBrokerPoolSelector(), kafkaReplicas, brokerPods);
-
-        LOGGER.info("Waiting for clients to finish sending/receiving messages");
-        ClientUtils.waitForContinuousClientSuccess(testStorage);
-    }
-
     @ParallelNamespaceTest
     @Tag(CONNECT)
     @Tag(BRIDGE)
@@ -1291,8 +1141,6 @@ class KafkaST extends AbstractST {
         }
     )
     void testAdditionalVolumes() {
-        assumeTrue(Environment.isKRaftModeEnabled());
-
         final TestStorage testStorage = new TestStorage(ResourceManager.getTestContext());
         final int numberOfKafkaReplicas = 3;
         final String configMapName = "example-configmap";
@@ -1308,10 +1156,8 @@ class KafkaST extends AbstractST {
         final String configMapMountPath = "/mnt/configmap-volume";
 
         resourceManager.createResourceWithWait(
-            NodePoolsConverter.convertNodePoolsIfNeeded(
-                KafkaNodePoolTemplates.brokerPoolPersistentStorage(testStorage.getNamespaceName(), testStorage.getBrokerPoolName(), testStorage.getClusterName(), numberOfKafkaReplicas).build(),
-                KafkaNodePoolTemplates.controllerPoolPersistentStorage(testStorage.getNamespaceName(), testStorage.getControllerPoolName(), testStorage.getClusterName(), 3).build()
-            )
+            KafkaNodePoolTemplates.brokerPoolPersistentStorage(testStorage.getNamespaceName(), testStorage.getBrokerPoolName(), testStorage.getClusterName(), numberOfKafkaReplicas).build(),
+            KafkaNodePoolTemplates.controllerPoolPersistentStorage(testStorage.getNamespaceName(), testStorage.getControllerPoolName(), testStorage.getClusterName(), 3).build()
         );
 
         SecretUtils.createSecret(testStorage.getNamespaceName(), secretName, secretKeyBase64, secretValueBase64);
@@ -1345,7 +1191,7 @@ class KafkaST extends AbstractST {
                 .build()
         };
 
-        resourceManager.createResourceWithWait(KafkaTemplates.kafkaPersistent(testStorage.getNamespaceName(), testStorage.getClusterName(), numberOfKafkaReplicas, 3)
+        resourceManager.createResourceWithWait(KafkaTemplates.kafka(testStorage.getNamespaceName(), testStorage.getClusterName(), numberOfKafkaReplicas)
             .editSpec()
                 .editKafka()
                     .editTemplate()

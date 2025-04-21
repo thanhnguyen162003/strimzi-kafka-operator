@@ -108,7 +108,10 @@ import static java.util.Collections.singletonMap;
  */
 @SuppressWarnings({"checkstyle:ClassDataAbstractionCoupling", "checkstyle:ClassFanOutComplexity"})
 public class KafkaCluster extends AbstractModel implements SupportsMetrics, SupportsLogging, SupportsJmx {
-    protected static final String COMPONENT_TYPE = "kafka";
+    /**
+     * Component type used by Kubernetes labels
+     */
+    public static final String COMPONENT_TYPE = "kafka";
 
     protected static final String ENV_VAR_KAFKA_INIT_EXTERNAL_ADDRESS = "EXTERNAL_ADDRESS";
     private static final String ENV_VAR_KAFKA_METRICS_ENABLED = "KAFKA_METRICS_ENABLED";
@@ -125,10 +128,7 @@ public class KafkaCluster extends AbstractModel implements SupportsMetrics, Supp
     protected static final String REPLICATION_PORT_NAME = "tcp-replication";
     protected static final int KAFKA_AGENT_PORT = 8443;
     protected static final String KAFKA_AGENT_PORT_NAME = "tcp-kafkaagent";
-    /**
-     * Port number used for control plane
-     */
-    public static final int CONTROLPLANE_PORT = 9090;
+    protected static final int CONTROLPLANE_PORT = 9090;
     protected static final String CONTROLPLANE_PORT_NAME = "tcp-ctrlplane"; // port name is up to 15 characters
 
     /**
@@ -159,21 +159,6 @@ public class KafkaCluster extends AbstractModel implements SupportsMetrics, Supp
      * Records the Kafka version currently running inside Kafka StrimziPodSet
      */
     public static final String ANNO_STRIMZI_IO_KAFKA_VERSION = Annotations.STRIMZI_DOMAIN + "kafka-version";
-
-    /**
-     * Records the used log.message.format.version
-     */
-    public static final String ANNO_STRIMZI_IO_LOG_MESSAGE_FORMAT_VERSION = Annotations.STRIMZI_DOMAIN + "log-message-format-version";
-
-    /**
-     * Records the used inter.broker.protocol.version
-     */
-    public static final String ANNO_STRIMZI_IO_INTER_BROKER_PROTOCOL_VERSION = Annotations.STRIMZI_DOMAIN + "inter-broker-protocol-version";
-
-    /**
-     * Records the state of the Kafka upgrade process. Unset outside of upgrades.
-     */
-    public static final String ANNO_STRIMZI_BROKER_CONFIGURATION_HASH = Annotations.STRIMZI_DOMAIN + "broker-configuration-hash";
 
     /**
      * Annotation for keeping certificate thumbprints
@@ -331,7 +316,10 @@ public class KafkaCluster extends AbstractModel implements SupportsMetrics, Supp
         result.initImage = initImage;
 
         result.metrics = new MetricsModel(kafkaClusterSpec);
-        result.logging = new LoggingModel(kafkaClusterSpec, result.getClass().getSimpleName(), false, true);
+
+        // Kafka 4.0 and newer uses Log4j2
+        boolean usesLog4j2 = KafkaVersion.compareDottedVersions(result.kafkaVersion.version(), "4.0.0") >= 0;
+        result.logging = new LoggingModel(kafkaClusterSpec, result.getClass().getSimpleName(), usesLog4j2, !usesLog4j2);
 
         result.jmx = new JmxModel(
                 reconciliation.namespace(),
@@ -351,18 +339,6 @@ public class KafkaCluster extends AbstractModel implements SupportsMetrics, Supp
         }
 
         result.configuration = configuration;
-
-        // We set the user-configured inter.broker.protocol.version if needed (when not set by the user)
-        // In KRaft mode, it should be always null
-        if (versionChange.interBrokerProtocolVersion() != null) {
-            result.configuration.setConfigOption(KafkaConfiguration.INTERBROKER_PROTOCOL_VERSION, versionChange.interBrokerProtocolVersion());
-        }
-
-        // We set the user-configured log.message.format.version if needed (when not set by the user)
-        // In KRaft mode, it should be always null.
-        if (versionChange.logMessageFormatVersion() != null) {
-            result.configuration.setConfigOption(KafkaConfiguration.LOG_MESSAGE_FORMAT_VERSION, versionChange.logMessageFormatVersion());
-        }
 
         result.ccMetricsReporter = CruiseControlMetricsReporter.fromCrd(kafka, configuration, numberOfBrokers);
 
@@ -554,12 +530,9 @@ public class KafkaCluster extends AbstractModel implements SupportsMetrics, Supp
         try {
             MetadataVersion version = MetadataVersion.fromVersionString(metadataVersion);
 
-            // KRaft is supposed to be supported from metadata version 3.0-IV1. But only from metadata version 3.3-IV0,
-            // the initial metadata version can be set using the kafka-storage.sh utility. And since most metadata
-            // versions do not support downgrade, that means 3.3-IV0 is the oldest metadata version that can be used
-            // with Strimzi.
-            if (version.isLessThan(MetadataVersion.IBP_3_3_IV0)) {
-                throw new InvalidResourceException("The oldest supported metadata version is 3.3-IV0");
+            // From Kafka 4.0.0, the oldest supported version seems to be 3.3-IV3
+            if (version.isLessThan(MetadataVersion.IBP_3_3_IV3)) {
+                throw new InvalidResourceException("The oldest supported metadata version is 3.3-IV3");
             }
         } catch (IllegalArgumentException e)    {
             throw new InvalidResourceException("Metadata version " + metadataVersion + " is invalid", e);
@@ -845,7 +818,7 @@ public class KafkaCluster extends AbstractModel implements SupportsMetrics, Supp
                                 pool.ownerReference,
                                 pool.templatePerBrokerService,
                                 ports,
-                                pool.labels.strimziSelectorLabels().withStatefulSetPod(node.podName()),
+                                pool.labels.strimziSelectorLabels().withStrimziPodName(node.podName()),
                                 ListenersUtils.serviceType(listener),
                                 ListenersUtils.brokerLabels(listener, node.nodeId()),
                                 ListenersUtils.brokerAnnotations(listener, node.nodeId()),
@@ -1230,37 +1203,55 @@ public class KafkaCluster extends AbstractModel implements SupportsMetrics, Supp
     }
 
     /**
-     * Generates the private keys for the Kafka brokers (if needed) and the secret with them which contains both the
+     * Generates the private keys for the Kafka nodes (if needed) and the Secrets with them which contain both the
      * public and private keys.
      *
      * @param clusterCa                             The CA for cluster certificates
      * @param clientsCa                             The CA for clients certificates
-     * @param existingSecret                        The existing secret with Kafka certificates
+     * @param existingSecrets                       The existing secrets containing Kafka certificates
      * @param externalBootstrapDnsName              Map with bootstrap DNS names which should be added to the certificate
      * @param externalDnsNames                      Map with broker DNS names  which should be added to the certificate
      * @param isMaintenanceTimeWindowsSatisfied     Indicates whether we are in a maintenance window or not
      *
-     * @return  The generated Secret with broker certificates
+     * @return  The generated Secrets containing Kafka node certificates
      */
-    public Secret generateCertificatesSecret(ClusterCa clusterCa, ClientsCa clientsCa, Secret existingSecret, Set<String> externalBootstrapDnsName, Map<Integer, Set<String>> externalDnsNames, boolean isMaintenanceTimeWindowsSatisfied) {
+    public List<Secret> generateCertificatesSecrets(ClusterCa clusterCa, ClientsCa clientsCa, List<Secret> existingSecrets, Set<String> externalBootstrapDnsName, Map<Integer, Set<String>> externalDnsNames, boolean isMaintenanceTimeWindowsSatisfied) {
+        Map<String, Secret> existingSecretWithName = existingSecrets.stream().collect(Collectors.toMap(secret -> secret.getMetadata().getName(), secret -> secret));
         Set<NodeRef> nodes = nodes();
-        Map<String, CertAndKey> brokerCerts;
+        Map<String, CertAndKey> existingCerts = new HashMap<>();
+        for (NodeRef node : nodes) {
+            String podName = node.podName();
+            // Reuse existing certificate if it exists and the CA cert generation hasn't changed since they were generated
+            if (existingSecretWithName.get(podName) != null) {
+                if (clusterCa.hasCaCertGenerationChanged(existingSecretWithName.get(podName))) {
+                    LOGGER.debugCr(reconciliation, "Certificate for pod {}/{} has old cert generation", namespace, podName);
+                } else {
+                    existingCerts.put(podName, CertUtils.keyStoreCertAndKey(existingSecretWithName.get(podName), podName));
+                }
+            } else {
+                LOGGER.debugCr(reconciliation, "No existing certificate found for pod {}/{}", namespace, podName);
+            }
+        }
 
+        Map<String, CertAndKey> updatedCerts;
         try {
-            brokerCerts = clusterCa.generateBrokerCerts(namespace, cluster, CertUtils.extractCertsAndKeysFromSecret(existingSecret, nodes),
-                    nodes, externalBootstrapDnsName, externalDnsNames, isMaintenanceTimeWindowsSatisfied, clusterCa.hasCaCertGenerationChanged(existingSecret));
+            updatedCerts = clusterCa.generateBrokerCerts(namespace, cluster, existingCerts,
+                    nodes, externalBootstrapDnsName, externalDnsNames, isMaintenanceTimeWindowsSatisfied);
         } catch (IOException e) {
             LOGGER.warnCr(reconciliation, "Error while generating certificates", e);
             throw new RuntimeException("Failed to prepare Kafka certificates", e);
         }
 
-        return ModelUtils.createSecret(KafkaResources.kafkaSecretName(cluster), namespace, labels, ownerReference,
-                CertUtils.buildSecretData(brokerCerts),
-                Map.ofEntries(
-                        clusterCa.caCertGenerationFullAnnotation(),
-                        clientsCa.caCertGenerationFullAnnotation()
-                ),
-                emptyMap());
+        return updatedCerts.entrySet()
+                .stream()
+                .map(entry -> ModelUtils.createSecret(entry.getKey(), namespace, labels, ownerReference,
+                        CertUtils.buildSecretData(entry.getKey(), entry.getValue()),
+                        Map.ofEntries(
+                                clusterCa.caCertGenerationFullAnnotation(),
+                                clientsCa.caCertGenerationFullAnnotation()
+                        ),
+                        emptyMap()))
+                .toList();
     }
 
     /**
@@ -1349,12 +1340,13 @@ public class KafkaCluster extends AbstractModel implements SupportsMetrics, Supp
      *
      * @return List of non-data volumes used by the Kafka pods
      */
+    @SuppressWarnings("deprecation") // OPA authorization and Secrets in custom authentication are deprecated
     private List<Volume> getNonDataVolumes(boolean isOpenShift, NodeRef node, PodTemplate templatePod) {
         List<Volume> volumeList = new ArrayList<>();
 
         volumeList.add(VolumeUtils.createTempDirVolume(templatePod));
         volumeList.add(VolumeUtils.createSecretVolume(CLUSTER_CA_CERTS_VOLUME, AbstractModel.clusterCaCertSecretName(cluster), isOpenShift));
-        volumeList.add(VolumeUtils.createSecretVolume(BROKER_CERTS_VOLUME, KafkaResources.kafkaSecretName(cluster), isOpenShift));
+        volumeList.add(VolumeUtils.createSecretVolume(BROKER_CERTS_VOLUME, node.podName(), isOpenShift));
         volumeList.add(VolumeUtils.createSecretVolume(CLIENT_CA_CERTS_VOLUME, KafkaResources.clientsCaCertificateSecretName(cluster), isOpenShift));
         volumeList.add(VolumeUtils.createConfigMapVolume(LOG_AND_METRICS_CONFIG_VOLUME_NAME, node.podName()));
         volumeList.add(VolumeUtils.createEmptyDirVolume("ready-files", "1Ki", "Memory"));
@@ -1441,6 +1433,7 @@ public class KafkaCluster extends AbstractModel implements SupportsMetrics, Supp
      *
      * @return  List of volume mounts
      */
+    @SuppressWarnings("deprecation") // OPA Authorization and Secrets in custom authentication are deprecated
     private List<VolumeMount> getVolumeMounts(Storage storage, ContainerTemplate containerTemplate, boolean isBroker) {
         List<VolumeMount> volumeMountList = new ArrayList<>(VolumeUtils.createVolumeMounts(storage, false));
         volumeMountList.add(VolumeUtils.createTempDirVolumeMount());
@@ -1604,6 +1597,7 @@ public class KafkaCluster extends AbstractModel implements SupportsMetrics, Supp
      *
      * @return  List of environment variables
      */
+    @SuppressWarnings("deprecation") // OPA Authorization is deprecated
     private  List<EnvVar> getEnvVars(KafkaPool pool) {
         List<EnvVar> varList = new ArrayList<>();
         varList.add(ContainerUtils.createEnvVar(ENV_VAR_KAFKA_METRICS_ENABLED, String.valueOf(metrics.isEnabled())));
@@ -1876,20 +1870,6 @@ public class KafkaCluster extends AbstractModel implements SupportsMetrics, Supp
      */
     public KafkaVersion getKafkaVersion() {
         return this.kafkaVersion;
-    }
-
-    /**
-     * @return  Kafka's log message format configuration
-     */
-    public String getLogMessageFormatVersion() {
-        return configuration.getConfigOption(KafkaConfiguration.LOG_MESSAGE_FORMAT_VERSION);
-    }
-
-    /**
-     * @return  Kafka's inter-broker protocol configuration
-     */
-    public String getInterBrokerProtocolVersion() {
-        return configuration.getConfigOption(KafkaConfiguration.INTERBROKER_PROTOCOL_VERSION);
     }
 
     /**

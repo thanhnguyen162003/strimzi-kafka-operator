@@ -769,7 +769,7 @@ public class KafkaClusterListenersTest {
         // Check external bootstrap service
         List<Service> bootstrapServices = kc.generateExternalBootstrapServices();
         assertThat(bootstrapServices.size(), is(1));
-        assertThat(bootstrapServices.get(0).getMetadata().getName(), is(KafkaResources.externalBootstrapServiceName(CLUSTER)));
+        assertThat(bootstrapServices.get(0).getMetadata().getName(), is(CLUSTER + "-kafka-external-bootstrap"));
         assertThat(bootstrapServices.get(0).getSpec().getType(), is("ClusterIP"));
         assertThat(bootstrapServices.get(0).getSpec().getSelector(), is(expectedBrokerSelectorLabels()));
         assertThat(bootstrapServices.get(0).getSpec().getPorts().size(), is(1));
@@ -787,11 +787,11 @@ public class KafkaClusterListenersTest {
         for (Service service : services)    {
             if (service.getMetadata().getName().contains("foo-brokers-")) {
                 assertThat(service.getMetadata().getName(), startsWith("foo-brokers-"));
-                assertThat(service.getSpec().getSelector().get(Labels.KUBERNETES_STATEFULSET_POD_LABEL), oneOf("foo-brokers-5", "foo-brokers-6", "foo-brokers-7"));
+                assertThat(service.getSpec().getSelector().get(Labels.STRIMZI_POD_NAME_LABEL), oneOf("foo-brokers-5", "foo-brokers-6", "foo-brokers-7"));
                 TestUtils.checkOwnerReference(service, POOL_BROKERS);
             } else {
                 assertThat(service.getMetadata().getName(), startsWith("foo-mixed-"));
-                assertThat(service.getSpec().getSelector().get(Labels.KUBERNETES_STATEFULSET_POD_LABEL), oneOf("foo-mixed-3", "foo-mixed-4"));
+                assertThat(service.getSpec().getSelector().get(Labels.STRIMZI_POD_NAME_LABEL), oneOf("foo-mixed-3", "foo-mixed-4"));
                 TestUtils.checkOwnerReference(service, POOL_MIXED);
             }
 
@@ -811,7 +811,7 @@ public class KafkaClusterListenersTest {
         assertThat(bootstrapRoutes.get(0).getMetadata().getName(), is(KafkaResources.bootstrapServiceName(CLUSTER)));
         assertThat(bootstrapRoutes.get(0).getSpec().getTls().getTermination(), is("passthrough"));
         assertThat(bootstrapRoutes.get(0).getSpec().getTo().getKind(), is("Service"));
-        assertThat(bootstrapRoutes.get(0).getSpec().getTo().getName(), is(KafkaResources.externalBootstrapServiceName(CLUSTER)));
+        assertThat(bootstrapRoutes.get(0).getSpec().getTo().getName(), is(CLUSTER + "-kafka-external-bootstrap"));
         assertThat(bootstrapRoutes.get(0).getSpec().getPort().getTargetPort(), is(new IntOrString(9094)));
         TestUtils.checkOwnerReference(bootstrapRoutes.get(0), KAFKA);
 
@@ -999,7 +999,7 @@ public class KafkaClusterListenersTest {
         List<Service> bootstrapServices = kc.generateExternalBootstrapServices();
         assertThat(bootstrapServices.size(), is(1));
 
-        assertThat(bootstrapServices.get(0).getMetadata().getName(), is(KafkaResources.externalBootstrapServiceName(CLUSTER)));
+        assertThat(bootstrapServices.get(0).getMetadata().getName(), is(CLUSTER + "-kafka-external-bootstrap"));
         assertThat(bootstrapServices.get(0).getMetadata().getFinalizers(), is(List.of()));
         assertThat(bootstrapServices.get(0).getSpec().getType(), is("LoadBalancer"));
         assertThat(bootstrapServices.get(0).getSpec().getSelector(), is(expectedBrokerSelectorLabels()));
@@ -1022,11 +1022,11 @@ public class KafkaClusterListenersTest {
         for (Service service : services)    {
             if (service.getMetadata().getName().contains("foo-brokers-")) {
                 assertThat(service.getMetadata().getName(), startsWith("foo-brokers-"));
-                assertThat(service.getSpec().getSelector().get(Labels.KUBERNETES_STATEFULSET_POD_LABEL), oneOf("foo-brokers-5", "foo-brokers-6", "foo-brokers-7"));
+                assertThat(service.getSpec().getSelector().get(Labels.STRIMZI_POD_NAME_LABEL), oneOf("foo-brokers-5", "foo-brokers-6", "foo-brokers-7"));
                 TestUtils.checkOwnerReference(service, POOL_BROKERS);
             } else {
                 assertThat(service.getMetadata().getName(), startsWith("foo-mixed-"));
-                assertThat(service.getSpec().getSelector().get(Labels.KUBERNETES_STATEFULSET_POD_LABEL), oneOf("foo-mixed-3", "foo-mixed-4"));
+                assertThat(service.getSpec().getSelector().get(Labels.STRIMZI_POD_NAME_LABEL), oneOf("foo-mixed-3", "foo-mixed-4"));
                 TestUtils.checkOwnerReference(service, POOL_MIXED);
             }
 
@@ -1420,7 +1420,7 @@ public class KafkaClusterListenersTest {
         List<Service> bootstrapServices = kc.generateExternalBootstrapServices();
         assertThat(bootstrapServices.size(), is(1));
 
-        assertThat(bootstrapServices.get(0).getMetadata().getName(), is(KafkaResources.externalBootstrapServiceName(CLUSTER)));
+        assertThat(bootstrapServices.get(0).getMetadata().getName(), is(CLUSTER + "-kafka-external-bootstrap"));
         assertThat(bootstrapServices.get(0).getSpec().getType(), is("NodePort"));
         assertThat(bootstrapServices.get(0).getSpec().getSelector(), is(expectedBrokerSelectorLabels()));
         assertThat(bootstrapServices.get(0).getSpec().getPorts().size(), is(1));
@@ -1438,11 +1438,11 @@ public class KafkaClusterListenersTest {
         for (Service service : services)    {
             if (service.getMetadata().getName().contains("foo-brokers-")) {
                 assertThat(service.getMetadata().getName(), startsWith("foo-brokers-"));
-                assertThat(service.getSpec().getSelector().get(Labels.KUBERNETES_STATEFULSET_POD_LABEL), oneOf("foo-brokers-5", "foo-brokers-6", "foo-brokers-7"));
+                assertThat(service.getSpec().getSelector().get(Labels.STRIMZI_POD_NAME_LABEL), oneOf("foo-brokers-5", "foo-brokers-6", "foo-brokers-7"));
                 TestUtils.checkOwnerReference(service, POOL_BROKERS);
             } else {
                 assertThat(service.getMetadata().getName(), startsWith("foo-mixed-"));
-                assertThat(service.getSpec().getSelector().get(Labels.KUBERNETES_STATEFULSET_POD_LABEL), oneOf("foo-mixed-3", "foo-mixed-4"));
+                assertThat(service.getSpec().getSelector().get(Labels.STRIMZI_POD_NAME_LABEL), oneOf("foo-mixed-3", "foo-mixed-4"));
                 TestUtils.checkOwnerReference(service, POOL_MIXED);
             }
 
@@ -1606,7 +1606,7 @@ public class KafkaClusterListenersTest {
 
         // Check external bootstrap service
         Service ext = kc.generateExternalBootstrapServices().get(0);
-        assertThat(ext.getMetadata().getName(), is(KafkaResources.externalBootstrapServiceName(CLUSTER)));
+        assertThat(ext.getMetadata().getName(), is(CLUSTER + "-kafka-external-bootstrap"));
         assertThat(ext.getSpec().getType(), is("NodePort"));
         assertThat(ext.getSpec().getSelector(), is(expectedBrokerSelectorLabels()));
         assertThat(ext.getSpec().getPorts().size(), is(1));
@@ -1889,7 +1889,7 @@ public class KafkaClusterListenersTest {
         List<Service> bootstrapServices = kc.generateExternalBootstrapServices();
         assertThat(bootstrapServices.size(), is(1));
 
-        assertThat(bootstrapServices.get(0).getMetadata().getName(), is(KafkaResources.externalBootstrapServiceName(CLUSTER)));
+        assertThat(bootstrapServices.get(0).getMetadata().getName(), is(CLUSTER + "-kafka-external-bootstrap"));
         assertThat(bootstrapServices.get(0).getSpec().getType(), is("ClusterIP"));
         assertThat(bootstrapServices.get(0).getSpec().getSelector(), is(expectedBrokerSelectorLabels()));
         assertThat(bootstrapServices.get(0).getSpec().getPorts().size(), is(1));
@@ -1907,11 +1907,11 @@ public class KafkaClusterListenersTest {
         for (Service service : services)    {
             if (service.getMetadata().getName().contains("foo-brokers-")) {
                 assertThat(service.getMetadata().getName(), startsWith("foo-brokers-"));
-                assertThat(service.getSpec().getSelector().get(Labels.KUBERNETES_STATEFULSET_POD_LABEL), oneOf("foo-brokers-5", "foo-brokers-6", "foo-brokers-7"));
+                assertThat(service.getSpec().getSelector().get(Labels.STRIMZI_POD_NAME_LABEL), oneOf("foo-brokers-5", "foo-brokers-6", "foo-brokers-7"));
                 TestUtils.checkOwnerReference(service, POOL_BROKERS);
             } else {
                 assertThat(service.getMetadata().getName(), startsWith("foo-mixed-"));
-                assertThat(service.getSpec().getSelector().get(Labels.KUBERNETES_STATEFULSET_POD_LABEL), oneOf("foo-mixed-3", "foo-mixed-4"));
+                assertThat(service.getSpec().getSelector().get(Labels.STRIMZI_POD_NAME_LABEL), oneOf("foo-mixed-3", "foo-mixed-4"));
                 TestUtils.checkOwnerReference(service, POOL_MIXED);
             }
 
@@ -1939,7 +1939,7 @@ public class KafkaClusterListenersTest {
         assertThat(bootstrapIngresses.get(0).getSpec().getRules().get(0).getHost(), is("my-kafka-bootstrap.com"));
         assertThat(bootstrapIngresses.get(0).getSpec().getRules().get(0).getHttp().getPaths().size(), is(1));
         assertThat(bootstrapIngresses.get(0).getSpec().getRules().get(0).getHttp().getPaths().get(0).getPath(), is("/"));
-        assertThat(bootstrapIngresses.get(0).getSpec().getRules().get(0).getHttp().getPaths().get(0).getBackend().getService().getName(), is(KafkaResources.externalBootstrapServiceName(CLUSTER)));
+        assertThat(bootstrapIngresses.get(0).getSpec().getRules().get(0).getHttp().getPaths().get(0).getBackend().getService().getName(), is(CLUSTER + "-kafka-external-bootstrap"));
         assertThat(bootstrapIngresses.get(0).getSpec().getRules().get(0).getHttp().getPaths().get(0).getBackend().getService().getPort().getNumber(), is(9094));
         TestUtils.checkOwnerReference(bootstrapIngresses.get(0), KAFKA);
 
@@ -2163,7 +2163,7 @@ public class KafkaClusterListenersTest {
 
             assertThat(service.getMetadata().getName(), oneOf("foo-mixed-clusterip-3", "foo-mixed-clusterip-4", "foo-brokers-clusterip-5", "foo-brokers-clusterip-6", "foo-brokers-clusterip-7"));
             assertThat(service.getSpec().getType(), is("ClusterIP"));
-            assertThat(service.getSpec().getSelector().get(Labels.KUBERNETES_STATEFULSET_POD_LABEL), oneOf("foo-mixed-3", "foo-mixed-4", "foo-brokers-5", "foo-brokers-6", "foo-brokers-7"));
+            assertThat(service.getSpec().getSelector().get(Labels.STRIMZI_POD_NAME_LABEL), oneOf("foo-mixed-3", "foo-mixed-4", "foo-brokers-5", "foo-brokers-6", "foo-brokers-7"));
             assertThat(service.getSpec().getPorts().size(), is(1));
             assertThat(service.getSpec().getPorts().get(0).getName(), is("tcp-clusterip"));
             assertThat(service.getSpec().getPorts().get(0).getPort(), is(9094));

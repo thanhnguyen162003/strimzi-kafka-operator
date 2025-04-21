@@ -42,13 +42,6 @@ The interval between xref:ref-operator-cluster-periodic-reconciliation-{context}
 `STRIMZI_OPERATION_TIMEOUT_MS`:: Optional, default 300000 ms.
 The timeout for internal operations, in milliseconds. Increase this value when using Strimzi on clusters where regular Kubernetes operations take longer than usual (due to factors such as prolonged download times for container images, for example).
 
-`STRIMZI_ZOOKEEPER_ADMIN_SESSION_TIMEOUT_MS`:: Optional, default 10000 ms.
-The session timeout for the Cluster Operator's ZooKeeper admin client, in milliseconds.
-Increase the value if ZooKeeper requests from the Cluster Operator are regularly failing due to timeout issues.
-There is a maximum allowed session time set on the ZooKeeper server side via the `maxSessionTimeout` config.
-By default, the maximum session timeout value is 20 times the default `tickTime` (whose default is 2000) at 40000 ms.
-If you require a higher timeout, change the `maxSessionTimeout` ZooKeeper server configuration value.
-
 `STRIMZI_OPERATIONS_THREAD_POOL_SIZE`:: Optional, default 10.
 The worker thread pool size, which is used for various asynchronous and blocking operations that are run by the Cluster Operator.
 
@@ -86,7 +79,7 @@ A pod disruption budget with the `maxUnavailable` value set to zero prevents Kub
 +
 Set this environment variable to `false` to disable pod disruption budget generation. You might do this, for example, if you want to manage the pod disruption budgets yourself, or if you have a development environment where availability is not important.
 
-`STRIMZI_LABELS_EXCLUSION_PATTERN`:: Optional, default regex pattern is `(^app.kubernetes.io/(?!part-of).*|^kustomize.toolkit.fluxcd.io.*)`.
+`STRIMZI_LABELS_EXCLUSION_PATTERN`:: Optional, default regex pattern is `(\^app.kubernetes.io/(?!part-of).\*|^kustomize.toolkit.fluxcd.io.*)`.
 The regex exclusion pattern used to filter labels propagation from the main custom resource to its subresources.
 The labels exclusion filter is not applied to labels in template sections such as `spec.kafka.template.pod.metadata.labels`.
 +
@@ -106,7 +99,6 @@ Labels can be applied to the following components:
 * `KAFKA`
 * `KAFKA_CONNECT`
 * `KAFKA_CONNECT_BUILD`
-* `ZOOKEEPER`
 * `ENTITY_OPERATOR`
 * `KAFKA_MIRROR_MAKER2`
 * `KAFKA_MIRROR_MAKER`
@@ -118,7 +110,7 @@ Labels can be applied to the following components:
 The label selector to filter the custom resources handled by the Cluster Operator.
 The operator will operate only on those custom resources that have the specified labels set.
 Resources without these labels will not be seen by the operator.
-The label selector applies to `Kafka`, `KafkaConnect`, `KafkaBridge`, `KafkaMirrorMaker`, and `KafkaMirrorMaker2` resources.
+The label selector applies to `Kafka`, `KafkaConnect`, `KafkaBridge`, and `KafkaMirrorMaker2` resources.
 `KafkaRebalance` and `KafkaConnector` resources are operated only when their corresponding Kafka and Kafka Connect clusters have the matching labels.
 +
 [source,yaml,options="nowrap"]

@@ -30,7 +30,6 @@ import io.strimzi.operator.common.auth.PemAuthIdentity;
 import io.strimzi.operator.common.auth.PemTrustSet;
 import io.strimzi.operator.common.auth.TlsPemIdentity;
 import io.strimzi.operator.common.model.Ca;
-import io.strimzi.operator.common.model.ClientsCa;
 import io.strimzi.operator.common.model.Labels;
 import io.strimzi.operator.common.operator.resource.ReconcileResult;
 import io.vertx.core.Future;
@@ -94,7 +93,7 @@ public class ReconcilerUtils {
         }
 
         return Future.join(podFutures)
-                .map((Void) null);
+                .mapEmpty();
     }
 
     /**
@@ -192,7 +191,7 @@ public class ReconcilerUtils {
             if (ca.certsRemoved()) {
                 restartReasons.add(RestartReason.CA_CERT_REMOVED, ca + " certificate removal");
             }
-            if (!isPodCaCertUpToDate(pod, ca)) {
+            if (ca.hasCaCertGenerationChanged(pod)) {
                 restartReasons.add(RestartReason.CA_CERT_HAS_OLD_GENERATION, "Pod has old " + ca + " certificate generation");
             }
         }
@@ -214,29 +213,6 @@ public class ReconcilerUtils {
     }
 
     /**
-     * Extracts and compares CA generation from the pod and from the CA class
-     *
-     * @param pod   Pod with the generation annotation
-     * @param ca    Certificate Authority
-     *
-     * @return      True when the generations match, false otherwise
-     */
-    private static boolean isPodCaCertUpToDate(Pod pod, Ca ca) {
-        return ca.caCertGeneration() == Annotations.intAnnotation(pod, getCaCertAnnotation(ca), Ca.INIT_GENERATION);
-    }
-
-    /**
-     * Gets the right annotation for the CA generation depending on whether it is a Cluster or Clients CA
-     *
-     * @param ca    Certification Authority
-     *
-     * @return      Name of the annotation for given CA
-     */
-    private static String getCaCertAnnotation(Ca ca) {
-        return ca instanceof ClientsCa ? Ca.ANNO_STRIMZI_IO_CLIENTS_CA_CERT_GENERATION : Ca.ANNO_STRIMZI_IO_CLUSTER_CA_CERT_GENERATION;
-    }
-
-    /**
      * Reconciles JMX Secret based on a JMX model
      *
      * @param reconciliation    Reconciliation marker
@@ -253,11 +229,11 @@ public class ReconcilerUtils {
                     if (desiredJmxSecret != null)  {
                         // Desired secret is not null => should be updated
                         return secretOperator.reconcile(reconciliation, reconciliation.namespace(), cluster.jmx().secretName(), desiredJmxSecret)
-                                .map((Void) null);
+                                .mapEmpty();
                     } else if (currentJmxSecret != null)    {
                         // Desired secret is null but current is not => we should delete the secret
                         return secretOperator.reconcile(reconciliation, reconciliation.namespace(), cluster.jmx().secretName(), null)
-                                .map((Void) null);
+                                .mapEmpty();
                     } else {
                         // Both current and desired secret are null => nothing to do
                         return Future.succeededFuture();

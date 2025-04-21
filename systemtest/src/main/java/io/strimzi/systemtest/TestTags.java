@@ -22,11 +22,6 @@ public interface TestTags {
     String REGRESSION = "regression";
 
     /**
-     * Tag for upgrade tests.
-     */
-    String UPGRADE = "upgrade";
-
-    /**
      * Tag for KRaft to KRaft tests.
      */
     String KRAFT_UPGRADE = "kraftupgrade";
@@ -157,11 +152,6 @@ public interface TestTags {
     String ROUTE = "route";
 
     /**
-     * Tag for tests that focus on migration from ZK to KRaft
-     */
-    String MIGRATION = "migration";
-
-    /**
      * Tag for tests that focus on performance
      */
     String PERFORMANCE = "performance";
@@ -180,5 +170,6 @@ public interface TestTags {
     /**
      * Performance specific related tags
      */
-    String CAPACITY = "capacity";
+    String USER_CAPACITY = "user-capacity";
+    String TOPIC_CAPACITY = "topic-capacity";
 }

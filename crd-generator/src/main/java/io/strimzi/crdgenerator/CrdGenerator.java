@@ -16,11 +16,13 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.fasterxml.jackson.databind.node.TextNode;
 import com.fasterxml.jackson.dataformat.yaml.YAMLGenerator;
 import com.fasterxml.jackson.dataformat.yaml.YAMLMapper;
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.fabric8.kubernetes.api.model.Quantity;
 import io.fabric8.kubernetes.client.CustomResource;
 import io.strimzi.api.annotations.ApiVersion;
 import io.strimzi.api.annotations.KubeVersion;
 import io.strimzi.api.annotations.VersionRange;
+import io.strimzi.crdgenerator.annotations.CelValidation;
 import io.strimzi.crdgenerator.annotations.Crd;
 import io.strimzi.crdgenerator.annotations.Description;
 import io.strimzi.crdgenerator.annotations.Example;
@@ -64,8 +66,6 @@ import static io.strimzi.crdgenerator.Property.subtypes;
 import static java.lang.Integer.parseInt;
 import static java.lang.reflect.Modifier.isAbstract;
 import static java.util.Arrays.asList;
-import static java.util.Collections.emptyList;
-import static java.util.Collections.emptyMap;
 
 /**
  * <p>Generates a Kubernetes {@code CustomResourceDefinition} YAML file
@@ -173,32 +173,18 @@ class CrdGenerator {
     private final ApiVersion storageVersion;
     private final VersionRange<ApiVersion> servedVersion;
     private final VersionRange<ApiVersion> describeVersions;
-    // TODO CrdValidator
-    // extraProperties
-    // @Buildable
 
     public interface Reporter {
-        void warn(String s);
-
         void err(String s);
     }
 
     public static class DefaultReporter implements Reporter {
-
-        public void warn(String s) {
-            System.err.println("CrdGenerator: warn: " + s);
-        }
-
         public void err(String s) {
             System.err.println("CrdGenerator: error: " + s);
         }
     }
 
     Reporter reporter;
-
-    public void warn(String s) {
-        reporter.warn(s);
-    }
 
     public static void argParseErr(String s) {
         System.err.println("CrdGenerator: error: " + s);
@@ -257,7 +243,9 @@ class CrdGenerator {
         }
     }
 
-
+    // Currently unused, but it might be hande in the future so it is not removed
+    @SuppressFBWarnings("URF_UNREAD_FIELD")
+    @SuppressWarnings("unused")
     private final VersionRange<KubeVersion> targetKubeVersions;
     private final ObjectMapper mapper;
     private final JsonNodeFactory nf;
@@ -265,11 +253,6 @@ class CrdGenerator {
     private final ConversionStrategy conversionStrategy;
 
     private int numErrors;
-
-    public CrdGenerator(VersionRange<KubeVersion> targetKubeVersions, ApiVersion crdApiVersion) {
-        this(targetKubeVersions, crdApiVersion, CrdGenerator.YAML_MAPPER, emptyMap(), new DefaultReporter(),
-                emptyList(), null, null, new NoneConversionStrategy(), null);
-    }
 
     /**
      * @param targetKubeVersions The targeted version(s) of Kubernetes.
@@ -357,7 +340,7 @@ class CrdGenerator {
             // "Webhook": must be None if spec.preserveUnknownFields is true
             result.put("preserveUnknownFields", false);
         }
-        result.set("conversion", buildConversion(crdApiVersion));
+        result.set("conversion", buildConversion());
 
         for (Crd.Spec.Version version : crd.versions()) {
             ApiVersion crApiVersion = ApiVersion.parse(version.name());
@@ -386,20 +369,10 @@ class CrdGenerator {
 
         result.set("versions", versions);
 
-        if (crdApiVersion.compareTo(V1) < 0
-                && targetKubeVersions.intersects(KubeVersion.parseRange("1.11-1.15"))) {
-            result.put("version", Arrays.stream(crd.versions())
-                    .map(v -> ApiVersion.parse(v.name()))
-                    .filter(this::shouldIncludeVersion)
-                    .findFirst()
-                    .map(ApiVersion::toString)
-                    .orElseThrow());
-        }
-
         return result;
     }
 
-    private ObjectNode buildConversion(ApiVersion crdApiVersion) {
+    private ObjectNode buildConversion() {
         ObjectNode conversion = nf.objectNode();
         if (conversionStrategy instanceof NoneConversionStrategy) {
             conversion.put("strategy", "None");
@@ -568,31 +541,23 @@ class CrdGenerator {
 
     private ObjectNode buildValidation(Class<? extends CustomResource> crdClass, ApiVersion crApiVersion, boolean description) {
         ObjectNode result = nf.objectNode();
-        // OpenShift Origin 3.10-rc0 doesn't like the `type: object` in schema root
-        boolean noTopLevelTypeProperty = targetKubeVersions.intersects(KubeVersion.parseRange("1.11-1.15"));
-        result.set("openAPIV3Schema", buildObjectSchema(crApiVersion, crdClass, crdApiVersion.compareTo(V1) >= 0 || !noTopLevelTypeProperty, description));
+        result.set("openAPIV3Schema", buildObjectSchema(crApiVersion, crdClass, description));
         return result;
     }
 
     private ObjectNode buildObjectSchema(ApiVersion crApiVersion, Class<?> crdClass, boolean description) {
-        return buildObjectSchema(crApiVersion, crdClass, true, description);
-    }
-
-    private ObjectNode buildObjectSchema(ApiVersion crApiVersion, Class<?> crdClass, boolean printType, boolean description) {
         ObjectNode result = nf.objectNode();
-        buildObjectSchema(crApiVersion, result, crdClass, printType, description);
+        buildObjectSchema(crApiVersion, result, crdClass, description);
         return result;
     }
 
-    private void buildObjectSchema(ApiVersion crApiVersion, ObjectNode result, Class<?> crdClass, boolean printType, boolean description) {
+    private void buildObjectSchema(ApiVersion crApiVersion, ObjectNode result, Class<?> crdClass, boolean description) {
         if (!crdClass.getName().startsWith("java.lang.")) {
             // java.lang.* class does not require class validation as i.e. JsonIgnore and Builder does not apply
             checkClass(crdClass);
         }
 
-        if (printType) {
-            result.put("type", "object");
-        }
+        result.put("type", "object");
 
         result.set("properties", buildSchemaProperties(crApiVersion, crdClass, description));
         ArrayNode oneOf = buildSchemaOneOf(crdClass);
@@ -636,7 +601,6 @@ class CrdGenerator {
     }
 
     private void checkClass(Class<?> crdClass) {
-
         if (!isAbstract(crdClass.getModifiers())) {
             checkForBuilderClass(crdClass, crdClass.getName() + "Builder");
             checkForBuilderClass(crdClass, crdClass.getName() + "Fluent");
@@ -676,11 +640,10 @@ class CrdGenerator {
         }
     }
 
-    private void checkDiscriminatorIsIncluded(Class<?> crdClass, Class c) {
+    private void checkDiscriminatorIsIncluded(Class<?> crdClass, Class<?> c) {
         try {
             String typePropertyName = crdClass.getAnnotation(JsonTypeInfo.class).property();
             String methodName = "get" + typePropertyName.substring(0, 1).toUpperCase(Locale.ENGLISH) + typePropertyName.substring(1).toLowerCase(Locale.ENGLISH);
-            @SuppressWarnings("unchecked")
             Method method = c.getMethod(methodName);
 
             if (!isAnnotatedWithIncludeNonNull(method)) {
@@ -847,6 +810,8 @@ class CrdGenerator {
             addDescription(crApiVersion, schema, property);
         }
 
+        celValidationRules(property, schema);
+
         return schema;
     }
 
@@ -884,12 +849,13 @@ class CrdGenerator {
 
             try {
                 Method valuesMethod = elementType.getMethod("values");
+
                 itemResult.set("enum", enumCaseArray((Enum[]) valuesMethod.invoke(null)));
             } catch (ReflectiveOperationException e) {
                 throw new RuntimeException(e);
             }
         } else  {
-            buildObjectSchema(crApiVersion, itemResult, elementType, true, description);
+            buildObjectSchema(crApiVersion, itemResult, elementType, description);
         }
         return result;
     }
@@ -906,7 +872,7 @@ class CrdGenerator {
         return keyType.equals(types[0]) && valueType.equals(types[1]);
     }
 
-    private ObjectNode buildBasicTypeSchema(Property element, Class type) {
+    private ObjectNode buildBasicTypeSchema(Property element, Class<?> type) {
         ObjectNode result = nf.objectNode();
 
         String typeName;
@@ -931,9 +897,6 @@ class CrdGenerator {
     private ObjectNode buildQuantityTypeSchema() {
         ObjectNode result = nf.objectNode();
 
-        if (crdApiVersion.compareTo(V1) < 0)
-            return result;
-
         ObjectNode additionalProperties = result.putObject("additionalProperties");
         ArrayNode anyOf = additionalProperties.putArray("anyOf");
         anyOf.addObject().put("type", "integer");
@@ -954,6 +917,43 @@ class CrdGenerator {
         if (crdApiVersion.compareTo(V1) >= 0) {
             ObjectNode additionalProperties = result.putObject("additionalProperties");
             additionalProperties.put("type", "string");
+        }
+    }
+
+    /**
+     * Adds CEL validation rules to the CRD for additional validation
+     *
+     * @param element   The element where the CEL validation annotation will be checked
+     * @param result    The JSON Object where the CEL validation rules should be added
+     */
+    private void celValidationRules(Property element, ObjectNode result)    {
+        // Annotation from the field has the priority. But if it does not exist, we try the type
+        CelValidation celValidation = element.getAnnotation(CelValidation.class);
+        if (celValidation == null) {
+            celValidation = element.getType().getType().getAnnotation(CelValidation.class);
+        }
+
+        if (celValidation != null
+                && celValidation.rules() != null
+                && celValidation.rules().length > 0) {
+            ArrayNode rules = result.putArray("x-kubernetes-validations");
+
+            for (CelValidation.CelValidationRule rule : celValidation.rules()) {
+                ObjectNode celRule = rules.addObject().put("rule", rule.rule());
+
+                if (!rule.message().isEmpty())  {
+                    celRule.put("message", rule.message());
+                }
+                if (!rule.messageExpression().isEmpty())  {
+                    celRule.put("messageExpression", rule.messageExpression());
+                }
+                if (!rule.fieldPath().isEmpty())  {
+                    celRule.put("fieldPath", rule.fieldPath());
+                }
+                if (!rule.reason().isEmpty())  {
+                    celRule.put("reason", rule.reason());
+                }
+            }
         }
     }
 
@@ -1013,8 +1013,7 @@ class CrdGenerator {
 
     @SuppressWarnings("unchecked")
     private <T> void checkDisjointVersions(AnnotatedElement annotated, T[] wrapperAnnotation, Class<T> annotationClass) {
-        long count = Arrays.stream(wrapperAnnotation)
-                .map(element -> apiVersion(element, annotationClass)).count();
+        long count = Arrays.stream(wrapperAnnotation).count();
 
         long distinctCount = Arrays.stream(wrapperAnnotation)
                 .map(element -> apiVersion(element, annotationClass)).distinct().count();
@@ -1050,7 +1049,7 @@ class CrdGenerator {
         return arrayNode;
     }
 
-    private String typeName(Class type) {
+    private String typeName(Class<?> type) {
         if (String.class.equals(type)) {
             return "string";
         } else if (int.class.equals(type)

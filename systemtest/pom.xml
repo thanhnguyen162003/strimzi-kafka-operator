@@ -233,6 +233,10 @@
             <artifactId>test-docs-generator-maven-plugin</artifactId>
             <scope>provided</scope>
         </dependency>
+        <dependency>
+            <groupId>io.strimzi.access-operator</groupId>
+            <artifactId>api</artifactId>
+        </dependency>
     </dependencies>
 
     <build>
@@ -443,11 +447,22 @@
         </profile>
 
         <profile>
-            <id>capacity</id>
+            <id>user-capacity</id>
             <properties>
                 <skipTests>false</skipTests>
                 <groups>
-                    capacity
+                    user-capacity
+                </groups>
+                <it.test>performance/**/*Performance*</it.test>
+            </properties>
+        </profile>
+
+        <profile>
+            <id>topic-capacity</id>
+            <properties>
+                <skipTests>false</skipTests>
+                <groups>
+                    topic-capacity
                 </groups>
                 <it.test>performance/**/*Performance*</it.test>
             </properties>

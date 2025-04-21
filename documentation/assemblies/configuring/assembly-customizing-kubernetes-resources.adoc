@@ -21,13 +21,11 @@ To make the changes to a Kubernetes resource, you can use the `template` propert
 Here is a list of the custom resources where you can apply the changes:
 
 * `Kafka.spec.kafka`
-* `Kafka.spec.zookeeper`
 * `Kafka.spec.entityOperator`
 * `Kafka.spec.kafkaExporter`
 * `Kafka.spec.cruiseControl`
 * `KafkaNodePool.spec`
 * `KafkaConnect.spec`
-* `KafkaMirrorMaker.spec`
 * `KafkaMirrorMaker2.spec`
 * `KafkaBridge.spec`
 * `KafkaUser.spec`
